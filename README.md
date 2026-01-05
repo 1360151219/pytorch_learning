@@ -166,5 +166,67 @@ train_dataset = Country211(root='./data', Train=True, download=True)
 
 `DataLoader` 是 `torch.utils.data` 模块中的一个类，用于将数据集（`Dataset`）封装为一个可迭代的对象，以便于在训练模型时批量加载数据。
 
+下面是一个简单的示例，展示了如何使用 `DataLoader` 加载 CIFAR-10 数据集：
+- `batch_size=64`：每个批次包含 64 张图像。
+- `shuffle=True`：在每个 epoch 开始时，随机打乱数据集的顺序。
+
+```py
+from torch.utils.tensorboard import SummaryWriter
+from torchvision import transforms, datasets
+from torch.utils.data import DataLoader
 
 
+def main():
+    # 加载训练集
+    train_dataset = datasets.CIFAR10(
+        root="./dataset", train=False, download=True, transform=transforms.ToTensor()
+    )
+    writer = SummaryWriter("logs")
+    dataloader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    step = 0
+    for batch in dataloader:
+        images, labels = batch
+        writer.add_images("Batch Images2", images, step)
+        print(step)
+        step += 1
+    writer.close()
+
+
+if __name__ == "__main__":
+    main()
+
+```
+
+
+### 2. 神经网络
+
+#### 2.1. 卷积层
+
+卷积层是神经网络中最基本的层之一，用于提取图像的特征。它通过卷积操作将输入图像与一组可学习的卷积核进行卷积，从而生成特征图。
+
+我们可以通过 `torch.nn` 来实现一个神经网络
+
+
+
+
+
+
+
+```python
+import torch
+import torch.nn as nn
+
+class SimpleConv2d(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(
+            in_channels=3, out_channels=6, kernel_size=3, stride=1, padding=1
+        )
+
+    def forward(self, x):
+        x = self.conv1(x)
+        return x
+```
+
+
+![alt text](Conv2d.png)
