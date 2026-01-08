@@ -10,12 +10,12 @@ class SimpleCNN(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.max_pool = nn.MaxPool2d(
-           kernel_size=3, stride=1, padding=1
+        self.conv1 = nn.Conv2d(
+            in_channels=3, out_channels=6, kernel_size=3, stride=1, padding=1
         )
 
     def forward(self, x):
-        x = self.max_pool(x)
+        x = self.conv1(x)
         return x
 
 
@@ -32,8 +32,14 @@ def main():
         # 前向传播
         outputs = model(images)
         print(outputs.shape)
-        writer.add_images("Maxpool Batch Origin", images, step)
-        writer.add_images("Maxpool Batch Output", outputs, step)
+        # torch.Size([64, 6, 32, 32])
+        # 因为 add_images 要求输入为 [N, C, H, W]，而当前 outputs 是 [64, 6, 32, 32]（N=64, C=6），
+        # 为了把 6 个通道拆成 3 通道，需要把 6 拆成 2 组 3 通道，于是把 N 和 C 合并成 64×2=128 张图，
+        # 即 reshape 成 [128, 3, 32, 32]
+        outputs = reshape(outputs, (-1, 3, 32, 32))
+        writer.add_images("Batch Origin2", images, step)
+        writer.add_images("Batch Outputs2", outputs, step)
+        print(step)
         step += 1
     writer.close()
 
