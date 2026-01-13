@@ -363,7 +363,7 @@ class SimpleConv2d(nn.Module):
 最大池化（Max Pooling）最大池化是卷积神经网络中常用的操作，具有以下重要作用：
 
 - 🔹 降维（Dimensionality Reduction）
-最大池化可以减少特征图的空间维度（高度和宽度），从而减少后续层的参数数量和计算量。这有助于降低模型的复杂度，提高训练速度。
+**最大池化可以减少特征图的空间维度（高度和宽度），不能改变通道数**，从而减少后续层的参数数量和计算量。这有助于降低模型的复杂度，提高训练速度。
 
 - 🔹 提取主要特征
 池化窗口会选择区域内的最大值，这相当于保留了该区域内最显著、最关键的特征，丢弃了次要信息。这样可以使模型更加关注重要特征。
@@ -457,3 +457,92 @@ if __name__ == "__main__":
 ```
 
 ![alt text](<截屏2026-01-09 00.16.25.png>)
+
+#### 2.3. 非线性层（激活函数层）
+
+
+非线性层（也叫激活函数层）是神经网络中引入非线性变换的组件，常见的有 `ReLU` 、 `Sigmoid` 、 `Tanh` 等。非线性层比较简单，主要作用是引入非线性变换，使神经网络能够学习复杂的特征表示，而不是简单的线性变换。
+
+我们可以通过查看 PyTorch 文档中的[非线性层部分](https://docs.pytorch.org/docs/stable/nn.html#non-linear-activations-weighted-sum-nonlinearity)来了解更多信息。
+
+
+
+比如 `nn.ReLU` 层，它的作用是对输入进行非线性变换，将所有负值设为 0，保持正值不变。
+
+$$
+\text{ReLU}(x) = (x)^+ = \max(0, x)
+$$
+
+python 代码示例如下：
+```py
+import torch
+import torch.nn as nn
+
+
+class SimpleCNN(nn.Module):
+    """一个非常简洁的卷积神经网络（CNN），用于 CIFAR10 分类。"""
+
+    def __init__(self):
+        super().__init__()
+        self.ReLU = nn.ReLU()
+
+    def forward(self, x):
+        x = self.ReLU(x)
+        return x
+
+
+def main():
+    a = torch.randn(10)
+    model = SimpleCNN()
+    outputs = model(a)
+    print(a,outputs)
+    # tensor([ 0.3132, -0.0041, -0.9163,  1.1990, -0.4604, -1.4164, -0.2908, -1.6122,0.8373,  0.5947]) 
+    # tensor([0.3132, 0.0000, 0.0000, 1.1990, 0.0000, 0.0000, 0.0000, 0.0000, 0.8373,0.5947])
+```
+
+#### 2.4. 全连接层（线性层）
+
+全连接层（也叫线性层）是神经网络中最基本的层，它的作用是对输入进行线性变换，输出的维度可以任意指定。
+
+- 1. 线性层的数学原理
+线性层的核心是执行一个线性变换操作，数学公式表示为：
+
+$$
+Y = X \times W^T + b
+$$
+
+- 2. 线性层的作用
+   - **特征转换**：将输入特征从一个维度空间转换到另一个维度空间
+   - **特征组合**：通过权重矩阵对输入特征进行加权组合，学习特征之间的关联
+   - **信息传递**：作为神经网络各层之间的信息传递桥梁
+
+全连接层通常用于神经网络的最后几层，用于将前面提取的特征转换为最终的输出（如分类任务的类别概率）。
+
+- 3. 代码示例
+
+```py
+import torch
+import torch.nn as nn
+
+# 创建一个线性层：输入维度10，输出维度5
+linear_layer = nn.Linear(in_features=10, out_features=5)
+
+# 随机生成输入张量 (batch_size=2, input_features=10)
+input_tensor = torch.randn(2, 10)
+
+output_tensor = linear_layer(input_tensor)
+
+print("输入形状:", input_tensor.shape)    # 输出: torch.Size([2, 10])
+print("输出形状:", output_tensor.shape)   # 输出: torch.Size([2, 5])
+print("权重形状:", linear_layer.weight.shape)  # 输出: torch.Size([5, 10])
+print("偏置形状:", linear_layer.bias.shape)    # 输出: torch.Size([5])
+```
+
+#### 2.5. 小实战：实现一个CIFAR10分类的神经网络模型
+
+本节，我们将实现一个简单的卷积神经网络（CNN），用于 CIFAR10 分类任务。我们先搜一下 CIFAR10 的实现模型：
+
+![](./Structure-of-CIFAR10-quick-model.png)
+
+
+
