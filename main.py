@@ -25,18 +25,22 @@ class CIFAR10CNN(nn.Module):
     def __init__(self):
         super().__init__()
         #  (32 - 5 + 2*padding)/1 + 1 = 32 => padding = 2
-        self.conv1 = nn.Conv2d(in_channels=3,out_channels=32,kernel_size=5,padding=2)
+        self.conv1 = nn.Conv2d(in_channels=3, out_channels=32, kernel_size=5, padding=2)
         # (32 - 2)/s+1 = 16 => s = 2
         self.p1 = nn.MaxPool2d(kernel_size=2, stride=2)
 
         # (16 - 5 + 2*p) +1 = 16 => padding = 2
-        self.conv2 = nn.Conv2d(in_channels=32, out_channels=32, kernel_size=5, padding=2)
+        self.conv2 = nn.Conv2d(
+            in_channels=32, out_channels=32, kernel_size=5, padding=2
+        )
 
         # (16 - 2)/s +1 = 8 => s = 2
         self.p2 = nn.MaxPool2d(kernel_size=2, stride=2)
 
         # (8 - 5 + 2*p) +1 = 8 => padding = 2
-        self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=5, padding=2)
+        self.conv3 = nn.Conv2d(
+            in_channels=32, out_channels=64, kernel_size=5, padding=2
+        )
 
         # (8 - 2)/s +1 = 4 => s = 2
         self.p3 = nn.MaxPool2d(kernel_size=2, stride=2)
@@ -44,39 +48,35 @@ class CIFAR10CNN(nn.Module):
         # 全连接层
         self.linear = nn.Linear(64 * 4 * 4, 10)
 
-
-
-
-        
-       
-
     def forward(self, x):
         # 输入形状: [batch_size, 3, 32, 32]
-        
+
         # 第一层卷积 + 激活 + 池化
         x = self.conv1(x)  # 输出形状: [batch_size, 32, 32, 32]
-        x = self.p1(x)               # 输出形状: [batch_size, 32, 16, 16]
-        
+        x = self.p1(x)  # 输出形状: [batch_size, 32, 16, 16]
+
         # 第二层卷积 + 激活 + 池化
         x = self.conv2(x)  # 输出形状: [batch_size, 32, 16, 16]
-        x = self.p2(x)               # 输出形状: [batch_size, 32, 8, 8]
-        
+        x = self.p2(x)  # 输出形状: [batch_size, 32, 8, 8]
+
         # 第三层卷积 + 激活 + 池化
         x = self.conv3(x)  # 输出形状: [batch_size, 64, 8, 8]
-        x = self.p3(x)               # 输出形状: [batch_size, 64, 4, 4]
-        
+        x = self.p3(x)  # 输出形状: [batch_size, 64, 4, 4]
+
         # 扁平层
-        x = torch.flatten(x, 1)        # 输出形状: [batch_size, 64*4*4=1024]
-        
+        x = torch.flatten(x, 1)  # 输出形状: [batch_size, 64*4*4=1024]
+
         # 全连接层
-        x = self.linear(x)                 # 输出形状: [batch_size, 10]
-        
+        x = self.linear(x)  # 输出形状: [batch_size, 10]
+
         return x
 
 
 def main():
-    dataset = datasets.CIFAR10(root="./dataset", train=False, download=True, transform=transforms.ToTensor())
-    dataloader = DataLoader(dataset, batch_size=1,shuffle=False)
+    dataset = datasets.CIFAR10(
+        root="./dataset", train=False, download=True, transform=transforms.ToTensor()
+    )
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
     for batch in dataloader:
         images, labels = batch
         model = CIFAR10CNN()
@@ -84,10 +84,37 @@ def main():
         outputs = model(images)
         # 找到概率最高的类别索引
         pred_idx = outputs[0].argmax().item()
-        print(labels,"预测类别索引:", pred_idx, "对应类别:", dataset.classes[pred_idx])
+        print(labels, "预测类别索引:", pred_idx, "对应类别:", dataset.classes[pred_idx])
 
         break
 
 
+def loss_fn():
+    loss_mean = nn.L1Loss(reduction="mean")
+    loss_sum = nn.L1Loss(reduction="sum")
+    input = torch.tensor([1, 2, 3, 4, 5])
+    target = torch.tensor([1.5, 2.5, 3.5, 4.5, 5.5])
+    output_mean = loss_mean(input, target)
+    output_sum = loss_sum(input, target)
+    print(output_mean)
+    print(output_sum)
+    # tensor(0.5000)
+    # tensor(2.5000)
+
+
+def loss_fn2():
+    loss_mean = nn.MSELoss(reduction="mean")
+    loss_sum = nn.MSELoss(reduction="sum")
+    input = torch.tensor([1, 2, 3, 4, 5])
+    target = torch.tensor([1.5, 2.5, 3.5, 4.5, 5.5])
+    output_mean = loss_mean(input, target)
+    output_sum = loss_sum(input, target)
+    print(output_mean)
+    print(output_sum)
+    # tensor(0.2500)
+    # tensor(1.2500)
+
+
 if __name__ == "__main__":
-    main()
+    # main()
+    loss_fn2()

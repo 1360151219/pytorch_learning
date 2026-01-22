@@ -79,7 +79,7 @@ composed_transform = transforms.Compose([
 ```
 
 这里介绍了这么多操作，可以使用以下代码亲自跑一下，看看效果：
-```py
+```python
 import torch
 import torchvision
 from torchvision import transforms
@@ -151,7 +151,6 @@ if __name__ == "__main__":
 - **CIFAR100**: 加载 CIFAR-100 数据集。CIFAR-100 是一个包含 60000 张 32x32 彩色图像的数据集，分为 100 个类别。
 
 - **Country211**：该数据集是通过从 YFCC100m 数据集中筛选出具有与 ISO-3166 国家代码对应的 GPS 坐标的图像构建而成的。为了实现数据集的平衡，每个国家会抽取 150 张训练图像、50 张验证图像和 100 张测试图像。
-```
 
 加载方式也很简单：
 
@@ -170,7 +169,7 @@ train_dataset = Country211(root='./data', Train=True, download=True)
 - `batch_size=64`：每个批次包含 64 张图像。
 - `shuffle=True`：在每个 epoch 开始时，随机打乱数据集的顺序。
 
-```py
+```python
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms, datasets
 from torch.utils.data import DataLoader
@@ -356,7 +355,7 @@ class SimpleConv2d(nn.Module):
 - 通道2卷积结果：(5×0)+(6×1)+(7×1)+(8×0) = 0+6+7+0 = 13
 - 最终输出：5 + 13 = 18
 
-在本章节一开始的例子中，一共会生成 6 个卷积核进行卷积操作，每个卷积核的结构是 `(3, 3, 3)`，其值是随机初始化的。。
+在本章节一开始的例子中，一共会生成 6 个卷积核进行卷积操作，每个卷积核的结构是 `(3, 3, 3)`，其值是随机初始化的。
 
 #### 2.2. 最大池化层
 
@@ -410,7 +409,7 @@ class SimpleConv2d(nn.Module):
 
 实操代码示例如下：
 
-```py
+```python
 from torch import reshape
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms, datasets
@@ -456,7 +455,7 @@ if __name__ == "__main__":
 
 ```
 
-![alt text](<截屏2026-01-09 00.16.25.png>)
+![alt text](截屏2026-01-09%2000.16.25.png)
 
 #### 2.3. 非线性层（激活函数层）
 
@@ -544,5 +543,615 @@ print("偏置形状:", linear_layer.bias.shape)    # 输出: torch.Size([5])
 
 ![](./Structure-of-CIFAR10-quick-model.png)
 
+根据上图我们分析，CIFAR10 分类模型的结构如下：
+
+- 输入：3@32x32（3通道RGB图像，32x32像素）
+- 第一层卷积：5x5卷积核，32个输出通道
+- 第一层池化：2x2最大池化
+- 第二层卷积：5x5卷积核，32个输出通道
+- 第二层池化：2x2最大池化
+- 第三层卷积：5x5卷积核，64个输出通道
+- 第三层池化：2x2最大池化
+- 扁平层：将64@4x4展平为1024个特征
+- 全连接层：1024输入，10输出（对应CIFAR10的10个类别）
+
+分析得出模型结构后，我们还需要考虑各个层的参数选择：
+
+比如第一层卷积中，卷积核大小为 5x5，输入时图片尺寸是32，输出时图片尺寸也是32，那么肯定设置了 `padding`。根据卷积层的输出尺寸公式：
+
+$$H_{out} = \left\lfloor \frac{H_{in} - KernelSize + 2Padding}{Stride} + 1 \right\rfloor$$
+
+我们需要在卷积层中添加 `padding=2` 来保持输出尺寸为 32x32。
+
+现在，我们就可以来实现这个模型了：
+
+```py
+class CIFAR10CNN(nn.Module):    
+    """一个用于CIFAR10分类的卷积神经网络（CNN），结构如下：
+    - 输入：3@32x32（3通道RGB图像，32x32像素）
+    - 第一层卷积：5x5卷积核，32个输出通道，padding=2保持尺寸
+    - 第一层池化：2x2最大池化，步长2，尺寸减半
+    - 第二层卷积：5x5卷积核，32个输出通道，padding=2保持尺寸
+    - 第二层池化：2x2最大池化，步长2，尺寸减半
+    - 第三层卷积：5x5卷积核，64个输出通道，padding=2保持尺寸
+    - 第三层池化：2x2最大池化，步长2，尺寸减半
+    - 扁平层：将64@4x4展平为1024个特征
+    - 全连接层：1024输入，10输出（对应CIFAR10的10个类别）
+    """
+
+    def __init__(self):
+        super().__init__()
+        # (32 - 5 + 2*padding)/1 + 1 = 32 => padding = 2
+        self.conv1 = nn.Conv2d(in_channels=3,out_channels=32,kernel_size=5,padding=2)
+        # (32 - 2)/s+1 = 16 => s = 2
+        self.p1 = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        # (16 - 5 + 2*p) +1 = 16 => padding = 2
+        self.conv2 = nn.Conv2d(in_channels=32, out_channels=32, kernel_size=5, padding=2)
+
+        # (16 - 2)/s +1 = 8 => s = 2
+        self.p2 = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        # (8 - 5 + 2*p) +1 = 8 => padding = 2
+        self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=5, padding=2)
+
+        # (8 - 2)/s +1 = 4 => s = 2
+        self.p3 = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        # 全连接层
+        self.linear = nn.Linear(64 * 4 * 4, 10)
+
+    def forward(self, x):
+        # 输入形状: [batch_size, 3, 32, 32]
+        
+        # 第一层卷积 + 激活 + 池化
+        x = self.conv1(x)  # 输出形状: [batch_size, 32, 32, 32]
+        x = self.p1(x)               # 输出形状: [batch_size, 32, 16, 16]
+        
+        # 第二层卷积 + 激活 + 池化
+        x = self.conv2(x)  # 输出形状: [batch_size, 32, 16, 16]
+        x = self.p2(x)               # 输出形状: [batch_size, 32, 8, 8]
+        
+        # 第三层卷积 + 激活 + 池化
+        x = self.conv3(x)  # 输出形状: [batch_size, 64, 8, 8]
+        x = self.p3(x)               # 输出形状: [batch_size, 64, 4, 4]
+        
+        # 扁平层
+        x = torch.flatten(x, 1)        # 输出形状: [batch_size, 64*4*4=1024]
+        
+        # 全连接层
+        x = self.linear(x)                 # 输出形状: [batch_size, 10]
+        
+        return x
+```
 
 
+#### 2.6. 损失函数（Loss Function）和反向传播（Backpropagation）
+
+损失函数（Loss Function）是神经网络中用于衡量模型预测值与真实值之间差异的函数。它的作用是在训练过程中，通过最小化损失函数的值，来优化模型的参数，从而实现对数据的准确预测。下面我们来介绍一下常用的损失函数。
+
+##### 2.6.1. L1Loss
+
+拿最简单的 L1Loss 损失函数为例：
+
+$$
+L1Loss = \frac{1}{n} \sum_{i=1}^n |y_i - \hat{y}_i|
+$$
+
+其中，$y_i$ 是真实值，$\hat{y}_i$ 是模型预测值，$n$ 是样本数量。L1Loss 的作用是计算模型预测值与真实值之间的平均绝对误差。
+
+```py
+def loss_fn():
+    loss_mean = nn.L1Loss(reduction="mean")
+    loss_sum = nn.L1Loss(reduction="sum")
+    input = torch.tensor([1, 2, 3, 4, 5])
+    target = torch.tensor([1.5, 2.5, 3.5, 4.5, 5.5])
+    output_mean = loss_mean(input, target)
+    output_sum = loss_sum(input, target)
+    print(output_mean)
+    print(output_sum)
+
+    # tensor(0.5000)
+    # tensor(2.5000)
+```
+
+##### 2.6.2. MSELoss
+
+比较常用的还有 `nn.MSELoss` 损失函数，它的作用是计算模型预测值与真实值之间的均方误差。
+
+$$
+MSELoss = \frac{1}{n} \sum_{i=1}^n (y_i - \hat{y}_i)^2
+$$
+
+其中，$y_i$ 是真实值，$\hat{y}_i$ 是模型预测值，$n$ 是样本数量。MSELoss 的作用是计算模型预测值与真实值之间的均方误差。
+
+```py
+def loss_fn2():
+    loss_mean = nn.MSELoss(reduction="mean")
+    loss_sum = nn.MSELoss(reduction="sum")
+    input = torch.tensor([1, 2, 3, 4, 5])
+    target = torch.tensor([1.5, 2.5, 3.5, 4.5, 5.5])
+    output_mean = loss_mean(input, target)
+    output_sum = loss_sum(input, target)
+    print(output_mean)
+    print(output_sum)
+    # tensor(0.2500): (0.5^2 + 0.5^2 + 0.5^2 + 0.5^2 + 0.5^2) / 5 = 0.25
+    # tensor(1.2500)
+```
+
+##### 2.6.3. CrossEntropyLoss 和 NLLLoss 交叉熵损失函数
+
+交叉熵损失函数（CrossEntropyLoss）是专门用于C 分类问题（即数据有 C 个类别，如 10 分类的图像识别），它的作用是计算模型预测值与真实值之间的交叉熵。它支持通过weight参数（1 维 Tensor，长度为 C）为每个类别分配权重，可解决训练集类别不平衡问题（例如某类样本极少，需提高其权重以避免模型忽略该类）。
+
+其数学计算公式如下：
+
+$$
+\text{loss}(x, class) = -\log\left(\frac{\exp(x[class])}{\sum_j \exp(x[j])}\right) = -x[class] + \log\left(\sum_j \exp(x[j])\right)
+$$
+
+
+NLLLoss 是 CrossEntropyLoss 的一个特殊情况，当模型输出的是对数概率（log probabilities）时，可以直接使用 NLLLoss 。
+
+其数学计算公式如下：
+
+$$
+Loss = \frac{1}{N} \sum_{n=1}^N -x_{n, y_n}
+$$
+
+举个例子，我想通过将一些动物图片进行分类，可选类别共有三种：猫、狗、猪。假设我们手头有两个参数不同的模型，它们都通过 sigmoid/softmax 输出每个类别的概率分布：
+
+> 参考文档：https://www.zhihu.com/tardis/zm/art/35709485?source_id=1003
+
+**模型1：**
+
+| 预测 | 真实 | 是否正确 |
+| :--- | :--- | :--- |
+| 0.3 0.3 0.4 | 0 0 1 (猪) | 正确 |
+| 0.3 0.4 0.3 | 0 1 0 (狗) | 正确 |
+| 0.1 0.2 0.7 | 1 0 0 (猫) | 错误 |
+
+模型1对于样本1和样本2以非常微弱的优势判断正确，对于样本3的判断则彻底错误。
+
+---
+
+**模型2：**
+
+| 预测 | 真实 | 是否正确 |
+| :--- | :--- | :--- |
+| 0.1 0.2 0.7 | 0 0 1 (猪) | 正确 |
+| 0.1 0.7 0.2 | 0 1 0 (狗) | 正确 |
+| 0.3 0.4 0.3 | 1 0 0 (猫) | 错误 |
+
+模型2对于样本1和样本2判断非常准确，对于样本3判断错误，但是相对来说没有错得太离谱。
+
+我们可以通过计算模型1和模型2的交叉熵损失来比较它们的性能：
+
+**模型1的交叉熵损失：**
+
+在这里，$p_{target}^{(i)}$ 代表模型对第 $i$ 个样本**真实类别**的预测概率。
+
+- **样本1**：真实类别是“猪”，模型1预测“猪”的概率是 **0.4**。
+- **样本2**：真实类别是“狗”，模型1预测“狗”的概率是 **0.4**。
+- **样本3**：真实类别是“猫”，模型1预测“猫”的概率是 **0.1**。
+
+所以计算过程如下：
+
+$$
+\begin{aligned}
+Loss_1 &= \frac{1}{3} \sum_{i=1}^3 -\log(p_{target}^{(i)}) \\
+&= \frac{1}{3} ( \underbrace{-\log(0.4)}_{\text{sample1(pig)}} + \underbrace{-\log(0.4)}_{\text{sample2(dog)}} + \underbrace{-\log(0.1)}_{\text{sample3(cat)}} ) \\
+&\approx \frac{1}{3} (0.916 + 0.916 + 2.302) \\
+&= 1.378
+\end{aligned}
+$$
+
+**模型2的交叉熵损失：**
+
+同理，对于模型2：
+- **样本1**（猪）：预测概率 **0.7**。
+- **样本2**（狗）：预测概率 **0.7**。
+- **样本3**（猫）：预测概率 **0.3**。
+
+$$
+\begin{aligned}
+Loss_2 &= \frac{1}{3} \sum_{i=1}^3 -\log(p_{target}^{(i)}) \\
+&= \frac{1}{3} ( \underbrace{-\log(0.7)}_{\text{sample1}} + \underbrace{-\log(0.7)}_{\text{sample2}} + \underbrace{-\log(0.3)}_{\text{sample3}} ) \\
+&\approx \frac{1}{3} (0.357 + 0.357 + 1.204) \\
+&= 0.639
+\end{aligned}
+$$
+
+从结果可以看出，$Loss_2 < Loss_1$，说明模型2的预测结果与真实值更接近，性能优于模型1。
+
+##### 2.6.4. CrossEntropyLoss 计算实战（代码详解）
+
+这里在写代码前要注意一下，由于 nn.CrossEntropyLoss 接收的是“未归一化的对数概率”（logits），
+而我们这里已知的是经过 Softmax 后的“概率”。所以我们需要先手动取对数 (torch.log)，
+然后使用 NLLLoss (Negative Log Likelihood Loss)。
+
+公式关系：`CrossEntropyLoss(logits) = NLLLoss(log_softmax(logits))`
+
+```py
+import torch
+import torch.nn as nn
+import math
+
+
+def calculate_pytorch_loss(probs_tensor, targets_tensor, model_name):
+    criterion = nn.NLLLoss(reduction="mean")
+    log_probs = torch.log(probs_tensor)
+    loss = criterion(log_probs, targets_tensor)
+    return loss.item()
+
+
+def main():
+    # 数据准备
+    # 类别映射: 0:猫, 1:狗, 2:猪
+
+    # --- 模型 1 数据 ---
+    # 样本1: 预测[0.3, 0.3, 0.4], 真实: 猪(2)
+    # 样本2: 预测[0.3, 0.4, 0.3], 真实: 狗(1)
+    # 样本3: 预测[0.1, 0.2, 0.7], 真实: 猫(0)
+    model1_probs = torch.tensor(
+        [[0.3, 0.3, 0.4], [0.3, 0.4, 0.3], [0.1, 0.2, 0.7]], dtype=torch.float32
+    )
+    model1_targets = torch.tensor([2, 1, 0], dtype=torch.long)
+
+    # --- 模型 2 数据 ---
+    # 样本1: 预测[0.1, 0.2, 0.7], 真实: 猪(2)
+    # 样本2: 预测[0.1, 0.7, 0.2], 真实: 狗(1)
+    # 样本3: 预测[0.3, 0.4, 0.3], 真实: 猫(0)
+    model2_probs = torch.tensor(
+        [[0.1, 0.2, 0.7], [0.1, 0.7, 0.2], [0.3, 0.4, 0.3]], dtype=torch.float32
+    )
+    model2_targets = torch.tensor([2, 1, 0], dtype=torch.long)
+    # --- 执行计算 ---
+    calculate_pytorch_loss(model1_probs, model1_targets, "模型 1")
+    calculate_pytorch_loss(model2_probs, model2_targets, "模型 2")
+
+
+if __name__ == "__main__":
+    main()
+
+```
+
+##### 2.6.5. 反向传播（Backpropagation）
+
+反向传播（Backpropagation）是神经网络训练中重要的一步，在训练过程中，我们最终希望能把损失函数的值最小化，从而使模型的预测结果与真实值更接近。为了实现这一目标，我们需要计算损失函数关于模型参数的梯度，然后根据梯度更新参数。
+
+反向传播的过程可以简单描述为：
+1. 前向传播：从输入层开始，依次计算每个神经元的输出，直到输出层。
+2. 计算损失：将输出层的输出与真实值进行比较，计算损失函数的值。
+3. 反向传播：从输出层开始，依次计算每个神经元的梯度，直到输入层。
+4. 更新参数：根据计算得到的梯度，使用优化算法（如梯度下降）更新模型参数。
+
+通过重复执行前向传播、计算损失、反向传播和参数更新步骤，我们可以逐渐优化模型的参数，使损失函数的值不断减小，从而提高模型的性能。
+
+以之前我们自己实现的 CIFAR10 分类模型为例，我们可以通过反向传播来更新模型参数。
+
+```python
+def main():
+    dataset = datasets.CIFAR10(
+        root="./dataset", train=False, download=True, transform=transforms.ToTensor()
+    )
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+    loss = nn.CrossEntropyLoss()
+
+    for batch in dataloader:
+        images, labels = batch
+        model = CIFAR10CNN()
+        # 前向传播
+        outputs = model(images)
+        # 计算损失
+        loss_value = loss(outputs, labels)
+        # 反向传播
+        # 计算出的 loss 值具备 backward 方法，调用后可自动完成反向传播，为每个可训练参数计算梯度。  
+        # 初始时网络参数的 grad 属性为空，执行 backward 后梯度被写入，供优化器更新网络参数。
+        loss_value.backward()
+```
+
+
+#### 2.7. 优化器
+
+优化器（Optimizer）是神经网络训练中用于更新模型参数的算法。它的作用是根据损失函数关于参数的梯度，
+通过迭代地调整各网络层的参数，使损失函数的值不断减小，从而提高模型的性能。
+
+常用的优化器包括：
+- 梯度下降（Gradient Descent）
+- 动量梯度下降（Momentum Gradient Descent）
+- 自适应学习率方法（Adaptive Learning Rate Methods）
+  - Adam
+  - RMSProp
+- 其他优化器（如 SGD with Nesterov Momentum）
+
+
+```py
+def main():
+    dataset = datasets.CIFAR10(
+        root="./dataset", train=False, download=True, transform=transforms.ToTensor()
+    )
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+    loss = nn.CrossEntropyLoss()
+    # 初始化优化器
+    optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+    for batch in dataloader:
+        images, labels = batch
+        model = CIFAR10CNN()
+        # 前向传播
+        outputs = model(images)
+        # 计算损失
+        loss_value = loss(outputs, labels)
+        # 优化器更新参数前，需要先将梯度清零, 否则梯度会累加, 导致错误的参数更新
+        optimizer.zero_grad()
+        loss_value.backward()
+        # 优化器根据计算得到的梯度，更新模型参数
+        optimizer.step()
+```
+
+#### 2.8. 神经网络的下载和修改
+
+除了我们自己搭建神经网络外，我们更多地是去下载现成的神经网络来直接使用。 [torchvision.models](https://pytorch.org/vision/stable/models.html)
+
+`torchvision.models` 子包包含用于解决不同任务的模型定义，包括：图像分类、逐像素语义分割、目标检测、实例分割、人体关键点检测、视频分类和光流。
+
+比如我们要下载一个用于图像分类的模型 `ResNet50`，我们可以这样做：
+
+```py
+import torchvision.models as models, ResNet50_Weights
+
+# 下载预训练的 ResNet - 50 模型
+# Old weights with accuracy 76.130%
+resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
+
+# New weights with accuracy 80.858%
+resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+
+# no weights
+resnet50()
+```
+
+使用方式也很简单：
+
+```py
+import torch
+import torchvision.models as models
+from torchvision.models import ResNet50_Weights
+
+# 下载预训练的 ResNet - 50 模型
+model = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
+
+print(model)
+
+
+"""
+ResNet(
+  (conv1): Conv2d(3, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+  (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  (relu): ReLU(inplace=True)
+  (maxpool): MaxPool2d(kernel_size=3, stride=2, padding=1, dilation=1, ceil_mode=False)
+  (layer1): Sequential(
+    (0): Bottleneck(
+      (conv1): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+      (bn2): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv3): Conv2d(64, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn3): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (relu): ReLU(inplace=True)
+      (downsample): Sequential(
+        (0): Conv2d(64, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        (1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      )
+    )
+    (1): Bottleneck(
+      (conv1): Conv2d(256, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+      (bn2): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv3): Conv2d(64, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn3): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (relu): ReLU(inplace=True)
+    )
+    (2): Bottleneck(
+      (conv1): Conv2d(256, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+      (bn2): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv3): Conv2d(64, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn3): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (relu): ReLU(inplace=True)
+    )
+  )
+  (layer2): Sequential(
+    (0): Bottleneck(
+      (conv1): Conv2d(256, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv2): Conv2d(128, 128, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+      (bn2): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv3): Conv2d(128, 512, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn3): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (relu): ReLU(inplace=True)
+      (downsample): Sequential(
+        (0): Conv2d(256, 512, kernel_size=(1, 1), stride=(2, 2), bias=False)
+        (1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      )
+    )
+    (1): Bottleneck(
+      (conv1): Conv2d(512, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv2): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+      (bn2): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv3): Conv2d(128, 512, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn3): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (relu): ReLU(inplace=True)
+    )
+    (2): Bottleneck(
+      (conv1): Conv2d(512, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv2): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+      (bn2): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv3): Conv2d(128, 512, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn3): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (relu): ReLU(inplace=True)
+    )
+    (3): Bottleneck(
+      (conv1): Conv2d(512, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv2): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+      (bn2): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv3): Conv2d(128, 512, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn3): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (relu): ReLU(inplace=True)
+    )
+  )
+  (layer3): Sequential(
+    (0): Bottleneck(
+      (conv1): Conv2d(512, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+      (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv3): Conv2d(256, 1024, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn3): BatchNorm2d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (relu): ReLU(inplace=True)
+      (downsample): Sequential(
+        (0): Conv2d(512, 1024, kernel_size=(1, 1), stride=(2, 2), bias=False)
+        (1): BatchNorm2d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      )
+    )
+    (1): Bottleneck(
+      (conv1): Conv2d(1024, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+      (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv3): Conv2d(256, 1024, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn3): BatchNorm2d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (relu): ReLU(inplace=True)
+    )
+    (2): Bottleneck(
+      (conv1): Conv2d(1024, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+      (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv3): Conv2d(256, 1024, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn3): BatchNorm2d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (relu): ReLU(inplace=True)
+    )
+    (3): Bottleneck(
+      (conv1): Conv2d(1024, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+      (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv3): Conv2d(256, 1024, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn3): BatchNorm2d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (relu): ReLU(inplace=True)
+    )
+    (4): Bottleneck(
+      (conv1): Conv2d(1024, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+      (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv3): Conv2d(256, 1024, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn3): BatchNorm2d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (relu): ReLU(inplace=True)
+    )
+    (5): Bottleneck(
+      (conv1): Conv2d(1024, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+      (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv3): Conv2d(256, 1024, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn3): BatchNorm2d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (relu): ReLU(inplace=True)
+    )
+  )
+  (layer4): Sequential(
+    (0): Bottleneck(
+      (conv1): Conv2d(1024, 512, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv2): Conv2d(512, 512, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+      (bn2): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv3): Conv2d(512, 2048, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn3): BatchNorm2d(2048, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (relu): ReLU(inplace=True)
+      (downsample): Sequential(
+        (0): Conv2d(1024, 2048, kernel_size=(1, 1), stride=(2, 2), bias=False)
+        (1): BatchNorm2d(2048, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      )
+    )
+    (1): Bottleneck(
+      (conv1): Conv2d(2048, 512, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv2): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+      (bn2): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv3): Conv2d(512, 2048, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn3): BatchNorm2d(2048, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (relu): ReLU(inplace=True)
+    )
+    (2): Bottleneck(
+      (conv1): Conv2d(2048, 512, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv2): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+      (bn2): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (conv3): Conv2d(512, 2048, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (bn3): BatchNorm2d(2048, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (relu): ReLU(inplace=True)
+    )
+  )
+  (avgpool): AdaptiveAvgPool2d(output_size=(1, 1))
+  (fc): Linear(in_features=2048, out_features=1000, bias=True)
+)
+"""
+
+```
+
+ResNet50 是计算机视觉领域非常著名的深度学习模型，它曾获得 ImageNet 图像分类竞赛的冠军。这里的 "50" 指的是这个网络一共有 50 层（包含卷积层和全连接层）。
+
+这里主要分为 4 个阶段：
+
+- **1. 预处理阶段（图像刚进入网络）**
+
+```py
+(conv1): Conv2d(3, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+(bn1): BatchNorm2d(64, ...)
+(relu): ReLU(inplace=True)
+(maxpool): MaxPool2d(kernel_size=3, stride=2, padding=1, ...)
+```
+- Conv2d (卷积层) ：这是流水线的第一道工序。
+  - `(3, 64)` ：输入是 3 个通道（因为图片是 RGB 彩色的），输出变成了 64 个特征通道。你可以理解为它提取了 64 种不同的基础特征（比如边缘、颜色斑点等）。
+  - `kernel_size=(7, 7)` ：这是一个很大的“扫描窗口”，一次看 7x7 像素的区域。
+  - `stride=(2, 2)` ：步长是 2，说明窗口每次移动 2 格。这会让图片的 长宽缩小一半 （例如从 224x224 变成 112x112）。
+- BatchNorm2d (BN层) ：这相当于“质检和标准化”。它把数据调整到一个标准的分布，防止数据在传输过程中变得过大或过小，让网络更容易训练。
+- ReLU (激活函数) ：这相当于一个“开关”。它把所有负数值变成 0，正数值保持不变。这给网络引入了非线性，让它能处理复杂任务。
+- MaxPool2d (最大池化层) ：这相当于“精简数据”。它在 3x3 的区域里只取最大的那个值。 stride=2 再次让图片的 长宽缩小一半 （例如从 112x112 变成 56x56）。
+
+总结 ：这一阶段主要是快速降低图片尺寸，提取初步特征。
+
+- **2. 核心加工阶段 （4 个 Layer）**
+
+接下来是 ResNet 的核心部分，由 layer1 到 layer4 组成。它们是由一种叫 Bottleneck（瓶颈结构） 的模块重复堆叠而成的。
+
+什么是 Bottleneck？ 你可以把它看作一个“三明治”结构，它包含三个卷积层：
+
+- **1. 1x1 卷积 ：先把通道数降下来（降维），减少计算量（像把面团压实）。**
+- **2. 3x3 卷积 ：在低维空间进行处理，提取特征（像在面团上刻花）。**
+- **3. 1x1 卷积 ：再把通道数升上去（升维），恢复特征维度（像把面团发酵变大）。**
+
+- **3. 输出阶段**
+
+
+```py
+(avgpool): AdaptiveAvgPool2d(output_size=(1, 1))
+(fc): Linear(in_features=2048, out_features=1000, bias=True)
+```
+
+- AdaptiveAvgPool2d (平均池化) ：不管前面出来的尺寸是多少（这里是 7x7），它都把每个通道的数值求平均，压缩成 1x1 的一个点。
+    - 输入：2048 个通道，每个通道 7x7。
+    - 输出：2048 个数值（每个数值代表该通道的平均特征强度）。
+- Linear (全连接层/FC) ：这是最后的裁判。
+    - in_features=2048 ：接收这 2048 个特征。
+    - out_features=1000 ：输出 1000 个数值。
+    - 这 1000 个数值分别对应 ImageNet 数据集中的 1000 个类别（如猫、狗、飞机等）。数值最大的那个类别，就是网络认为的预测结果。
+
+**修改模型：**
+
+如果我们想要修改这个模型的话，我们可以通过类似 `model.layer1[2].conv1` 的方式去访问以及修改对应的结构层。
