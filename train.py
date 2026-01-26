@@ -1,5 +1,8 @@
 import torch
 import torch.nn as nn
+import os
+
+import time
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from torch.utils.tensorboard.writer import SummaryWriter
@@ -47,13 +50,12 @@ def main():
     train_epoch = 20
     # 当前训练的次数
     current_train_step = 1
-    # 当前测试的次数
-    current_test_step = 1
 
     loss_fn = nn.CrossEntropyLoss()
 
     optimizer = torch.optim.SGD(model.parameters(), lr=1e-2)
 
+    time_start = time.time()
     for epoch in range(train_epoch):
         print(f"=============第{epoch}轮训练开始=============")
         dataloader = DataLoader(train_dataset, batch_size=64)
@@ -67,6 +69,7 @@ def main():
             # 计算损失
             loss = loss_fn(outputs, labels)
             total_loss += loss.item()
+            print(outputs.shape)
             # 梯度清零，否则训练时梯度会累加，导致不准
             optimizer.zero_grad()
             # 反向传播
@@ -81,6 +84,38 @@ def main():
         print(
             f"=============第{epoch}轮训练结束，总的损失为{total_loss:.4f}============="
         )
+
+        # 开始测试阶段
+        model.eval()
+        with torch.no_grad():
+            test_dataloader = DataLoader(test_dataset, batch_size=64)
+            total_accuracy = 0
+            for batch in test_dataloader:
+                images, labels = batch
+                images = images.to(device)
+                labels = labels.to(device)
+                outputs = model(images)
+                accuracy = (outputs.argmax(1) == labels).sum().item()
+                total_accuracy += accuracy
+            print(
+                f"=============第{epoch + 1}轮测试结束，准确率为{total_accuracy / len(test_dataset):.4f}============="
+            )
+            tensorboard.add_scalar(
+                "test_accuracy",
+                total_accuracy / len(test_dataset),
+                epoch + 1,
+            )
+        # 保存模型
+        if (epoch + 1) % 10 == 0:
+            if not os.path.exists("./train_models"):
+                os.makedirs("./train_models")
+            torch.save(
+                model.state_dict(), f"./train_models/cifar10_cnn_{epoch + 1}.pth"
+            )
+
+    time_end = time.time()
+    print(f"训练耗时{time_end - time_start:.4f}秒")
+
     tensorboard.close()
 
 
