@@ -1,4 +1,4 @@
-# PyTorch Learning
+# 万字长文带你0-1搭建和训练神经网络
 
 A repository for learning PyTorch concepts and implementing various examples.
 
@@ -1365,8 +1365,89 @@ if epoch % 10 == 0:
 
 我们练好的仙丹已经出炉了，快用它来预测一下吧！
 
-比如说，我随便找了一张小狗图片。
+比如说，这里我随便找了一张船的图片。
+
+！[Ship](ship.png)
+
+首先我们需要加载模型。由于在上一步中，我们通过 `model.state_dict()` 保存了模型的参数，所以我们可以通过 `model.load_state_dict()` 来加载模型的参数。
+
+在PyTorch中，模型保存有两种方式：直接保存 `model` 和 只保存模型参数 `model.state_dict()` 
+
+主要区别总结如下：
+
+| 特性 | `model` 保存 | `model.state_dict()` 保存 |
+|------|-------------|-------------------------|
+| 保存内容 | 完整模型对象 | 仅模型参数 |
+| 文件大小 | 较大 | 较小 |
+| 加载灵活性 | 低 | 高 |
+| 版本兼容性 | 较差 | 较好 |
+| 推荐程度 | 不推荐 | 推荐 |
+
+- **使用 `model` 保存**：快速原型开发，临时保存，对版本兼容性要求不高的场景
+- **使用 `model.state_dict()` 保存**：正式项目，需要长期维护的模型，对版本兼容性有要求的场景
+
+在实际应用中，几乎所有的生产环境和开源项目都采用 `model.state_dict()` 的方式保存模型，因为它提供了更好的灵活性和兼容性。
+
 
 ```python
+class CIFAR10CNN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.model = nn.Sequential(
+            nn.Conv2d(3, 32, 5, 1, 2),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(32, 32, 5, 1, 2),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(32, 64, 5, 1, 2),
+            nn.MaxPool2d(2, 2),
+            nn.Flatten(),
+            nn.Linear(64 * 4 * 4, 10),
+        )
 
+    def forward(self, x):
+        x = self.model(x)
+        return x
+
+
+if __name__ == "__main__":
+    model = CIFAR10CNN()
+    state_dict = torch.load("./train_models/cifar10_cnn_20.pth")
+    model.load_state_dict(state_dict)
+    # ...
 ```
+
+加载完模型参数后，我们就可以使用模型进行推理了。先加载和预处理我们准备好的图片：
+
+```python
+cat_img = Image.open("./ship.jpg")
+# 对图片进行预处理
+trans = transforms.Compose(
+    [
+        transforms.Resize((32, 32)),
+        transforms.ToTensor(),
+    ]
+)
+cat_tensor = trans(cat_img)
+# 增加一个 batch 维度
+cat_tensor = cat_tensor.unsqueeze(0)
+# （1，3，32，32）
+print(cat_tensor.shape)
+```
+
+最后来进行推理：
+
+```python
+test_dataset = datasets.CIFAR10(
+  root="./dataset", train=False, download=True, transform=transforms.ToTensor()
+)
+labels = test_dataset.classes
+# 前向传播
+with torch.no_grad():
+  model.eval()
+  outputs = model(cat_tensor)
+  predicted = outputs.argmax(dim=1)
+  print(labels[predicted.item()])
+  # ship
+```
+
+这就是整个的模型推理验证过程。由于我们训练的模型准确率只有 63% ，所以推理结果可能会有误差。因此这里如果选择了小猫、小狗等图片，模型可能会错误地将其分类。
