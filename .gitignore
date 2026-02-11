@@ -5,6 +5,9 @@ build/
 dist/
 wheels/
 *.egg-info
+custom_dataset
+train_results
+.DS_Store
 
 # Virtual environments
 .venv
