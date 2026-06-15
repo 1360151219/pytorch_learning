@@ -16,4 +16,5 @@ logs
 *_logs
 
 dataset
+*.pt
 

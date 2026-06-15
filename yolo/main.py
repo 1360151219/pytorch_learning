@@ -230,7 +230,7 @@ def main():
     dataset_root = os.path.join(current_dir, "custom_dataset")
     images_dir = os.path.join(dataset_root, "images")
     annotations_dir = os.path.join(dataset_root, "annotation")
-    labels_dir = os.path.join(dataset_root, "labels")
+    labels_dir = os.path.join(dataset_root, "yolo_dataset")
 
     # 定义类别
     classes = ["tank", "coffee_bean", "info_device", "quantum_memory"]

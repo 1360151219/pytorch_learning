@@ -1,222 +1,393 @@
-# 目标检测实战教程
+# 用 YOLO 训练自己的目标检测模型：从标注图片到识别“三角洲行动”目标
 
-目标检测是计算机视觉中的一个重要任务，它的目标是在图像中识别并定位出感兴趣的对象。
+我用一小批自己标注的游戏截图，训练了一个可以识别“三角洲行动”目标的 YOLO 检测模型。
 
-目标检测器的输出是一组边界框，这些边界框包围了图像中的目标，以及每个框的类别标签和置信度分数。当您需要在场景中识别感兴趣的目标，但不需要确切知道目标在哪里或其确切形状时，目标检测是一个不错的选择。
+这件事听起来像是“深度学习工程师专属任务”，但真正跑通以后会发现，目标检测的完整流程其实非常清晰：
+
+1. 准备图片。
+2. 用工具把目标框出来。
+3. 把标注整理成 YOLO 能读懂的格式。
+4. 写一个数据集配置文件。
+5. 加载预训练模型并开始训练。
+6. 用训练出来的 `best.pt` 对新图片做预测。
+
+这篇文章会尽量做到两件事：
+
+- 对初学者友好：先讲“它在做什么”，再讲“代码怎么写”。
+- 保留技术细节：数据格式、坐标转换、训练参数、评估指标都会解释清楚。
+
+如果你从来没训练过目标检测模型，也可以把这篇文章当成一次完整的实战路线图。
 
 ---
 
+## 1. 目标检测到底在做什么？
 
-## 1. YOLO 模型
+计算机视觉里有很多任务。最常见的几个可以简单区分为：
 
-### 1.1. YOLO 简介和安装
+- **图像分类**：判断一张图里有什么，比如“这是一辆车”。
+- **目标检测**：不仅判断有什么，还要把目标的位置框出来，比如“这里有一辆车，位置在这个矩形框里”。
+- **图像分割**：进一步精确到像素级，把目标的轮廓抠出来。
 
-在目标检测领域，YOLO (You Only Look Once) 一直是速度和精度的代名词。
-到了 2026 年，YOLOv26 带来了几个革命性的改进，非常适合我们初学者：
+本文做的是第二种：**目标检测**。
 
-1.  **端到端 (End-to-End)**：以前的 YOLO 需要一个叫 "NMS" 的复杂后处理步骤来去除重复的框，现在 YOLOv26 直接输出最终结果，速度更快，代码更简单！
-2.  **MuSGD 优化器**：这是一种结合了 SGD 和 Muon 的新型优化器，让模型训练收敛更快，就像给汽车换了更高级的引擎。
-3.  **CPU 友好**：官方宣称 CPU 推理速度提升了 43%，这对我们使用 Mac (尤其是没有独立显卡) 的同学来说是巨大的福音。
+目标检测模型的输出通常包含三类信息：
+
+| 输出 | 含义 |
+| --- | --- |
+| 类别 | 这个目标是什么，比如 `tank` |
+| 置信度 | 模型有多确定，比如 `0.86` |
+| 边界框 | 目标在图片中的位置，通常用矩形框表示 |
+
+一句话总结：
+
+> 目标检测不是只告诉你“图里有坦克”，而是告诉你“坦克在图里的哪个位置”。
 
 ---
 
+## 2. 为什么用 YOLO？
 
-尽管是 2026 年的最新模型，YOLOv26 依然保持了极好的兼容性，集成在 `ultralytics` 库中。
+YOLO 的全称是 **You Only Look Once**，直译过来就是“只看一眼”。
 
-在终端中运行以下命令：
+这个名字其实很形象：YOLO 的核心优势是速度快，适合做实时或准实时的目标检测任务。对于初学者来说，它还有一个非常重要的优点：生态成熟，调用简单。
+
+本文使用 `ultralytics` 库来完成 YOLO 模型的加载、训练和推理。你不需要从零实现完整的检测网络，只需要先理解数据格式和训练流程，就可以把一个自定义检测任务跑起来。
+
+本文示例使用本地的 `yolo26n.pt` 模型文件。如果你的环境中没有这个权重文件，也可以换成当前 `ultralytics` 支持的其他 nano 级模型权重。`n` 通常代表 nano，也就是体积更小、速度更快的版本，适合入门实验。
+
+---
+
+## 3. 环境准备
+
+先安装需要用到的库：
 
 ```bash
-# 安装 ultralytics 库 (确保更新到支持 YOLOv26 的最新版本)
 pip install ultralytics --upgrade
-
-# 安装 opencv 用于图像处理
 pip install opencv-python
+pip install xmltodict pyyaml
 ```
+
+其中：
+
+- `ultralytics`：负责 YOLO 模型的加载、训练和预测。
+- `opencv-python`：用于常见图像处理。
+- `xmltodict`：用于把 VOC 格式的 XML 标注解析成 Python 字典。
+- `pyyaml`：用于生成 YOLO 训练需要的 `data.yaml`。
 
 ---
 
-### 1.2. 快速体验：你的第一次检测
+## 4. 先快速跑一次官方示例
 
-我们直接加载官方预训练好的 **YOLOv26 Nano** 模型 (`yolo26n.pt`)。这是最小、最快的版本。
+在正式训练自己的数据集之前，建议先用官方预训练模型跑一次预测。这样可以先确认环境没有问题。
 
-打开或新建 `quick_start.py`，输入以下代码：
+新建 `quick_start.py`：
 
 ```python
 from ultralytics import YOLO
 
-# 1. 加载模型
-# 'yolov26n.pt' 是 2026 年最新的 nano 版本模型
-# 'n' 代表 nano，体积最小，速度最快
-# 第一次运行时，系统会自动从云端下载这个模型文件
-model = YOLO('yolo26n.pt')
-# 2. 进行预测
-# source: 图片来源，可以是本地路径，也可以是 URL
-# 我们依然用经典的巴士图来测试
-model.predict(source='https://ultralytics.com/images/bus.jpg', save=True)
+# 加载模型。第一次运行时，如果本地没有对应权重，可能会自动下载。
+model = YOLO("yolo26n.pt")
+
+# 对一张网络图片进行目标检测，并保存检测结果。
+model.predict(
+    source="https://ultralytics.com/images/bus.jpg",
+    save=True,
+)
 ```
 
-**运行结果：**
-你会在 `runs/detect/predict` 目录下看到结果。
+运行后，你会在类似下面的目录中看到预测结果：
 
-当然，你也可以通过 `save_dir` 参数指定保存目录。
+```text
+runs/detect/predict
+```
+
+如果想指定保存目录，可以这样写：
 
 ```python
-model.predict(source='https://ultralytics.com/images/bus.jpg', save=True, save_dir='images')
+model.predict(
+    source="https://ultralytics.com/images/bus.jpg",
+    save=True,
+    project="images",
+    name="bus_demo",
+)
 ```
 
-**运行结果：**
-你会在 `images` 目录下看到结果。
+这一步的意义不是训练模型，而是确认三件事：
+
+1. Python 环境能正常加载 YOLO。
+2. 模型权重能正常读取。
+3. 图片预测和结果保存流程能跑通。
+
+先让 demo 跑起来，后面排查自定义数据集时会轻松很多。
 
 ---
 
-## 2. YOLO 实战：训练自己的数据集
+## 5. 实战目标：训练一个自己的检测模型
 
-假设我们要训练一个模型来检测 三角洲行动 中的 **“大红-坦克”** 。我们应该怎么去做呢？
+这次我想训练一个模型，让它检测“三角洲行动”截图里的目标，例如：
 
-### 2.1 目标检测数据集介绍
+- `tank`
+- `coffee_bean`
+- `info_device`
+- `quantum_memory`
 
-业界常用于进行目标检测的数据集格式有 COCO、 VOC、YOLO 等，它们的数据格式各有千秋。不过唯一相同的是，他们都是以一个矩形框的形式来标注目标的。
+也就是说，我希望模型看到一张游戏截图时，能自动判断里面有没有这些目标，并把它们框出来。
 
-- **[COCO](https://cocodataset.org/#download)**：COCO 是一个常用的数据集，包含 80 个类别，是目标检测领域的基准数据集。
+目标检测任务最关键的不是代码，而是数据。
 
-coco 针对于每一个对象的标注格式是只标注**矩形框的左上角坐标 + 矩形框的宽高。**
+模型之所以能学会“什么是坦克”，不是因为它天生理解坦克，而是因为我们给了它足够多这样的样本：
 
-    ```text
-    coco/
-    ├── annotations/
-    │   ├── instances_train2017.json
-    │   └── instances_val2017.json
-    ├── train2017/
-    │   ├── 000000000009.jpg
-    │   └── ...
-    └── val2017/
-        ├── 000000000139.jpg
-        └── ...
-    ```
+> 这张图里有一个 `tank`，它的位置在这个框里。
 
+只要你理解了这句话，就理解了目标检测数据集的本质。
 
-- **VOC**：VOC 是另一个常用的数据集，包含 20 个类别，也是目标检测领域的基准数据集。
+---
 
-voc 针对于每一个对象的标注格式是只标注**矩形框的左上角坐标 + 右下角坐标**
+## 6. 目标检测数据集格式
 
-    ```text
-    voc/
-    ├── annotations/
-    │   ├── train/
-    │   └── val/
-    ├── images/
-    │   ├── train/
-    │   └── val/
-    ```
+目标检测数据集有很多常见格式，比如 COCO、VOC 和 YOLO。
 
-- **[YOLO](https://docs.ultralytics.com/zh/quickstart/)**：YOLO 数据集格式是比较简洁的，每个图片对应一个文本文件（`*.txt`），文件中包含了所有的标注信息。
+它们的共同点是：都要记录每个目标的类别和矩形框位置。
 
-yolo 针对于每一个对象的标注格式是只标注**矩形框的中心点坐标 + 矩形框的宽高**，且每个坐标都归一化到 [0, 1] 之间。
+不同点在于：矩形框的表示方法不一样。
 
-即：
-- 矩形框的中心点坐标 = (x_center / img_width, y_center / img_height)
-- 矩形框的宽高 = (width / img_width, height / img_height)
+### 6.1 COCO 格式
 
-所有的坐标值都归一化到 [0, 1] 之间，这是 YOLO 数据集的一个标准要求。
+COCO 是目标检测领域非常常见的数据集格式，通常使用 JSON 文件保存标注。
 
+COCO 的边界框通常表示为：
 
-结构如下：
 ```text
-datasets/
-└── pikachu_data/
-    ├── images/
-    │   ├── train/  # 训练图片
-    │   └── val/    # 验证图片
-    └── labels/
-        ├── train/  # 训练标签
-        └── val/    # 验证标签
+x_min, y_min, width, height
 ```
 
-### 2.2. 图片标注
+也就是：
 
-本文在图片标注上使用的是 **LabelImg** 工具。这是最经典、最适合新手的开源标注工具。它的优点是**轻量级、不用联网、免费**，而且**原生支持**导出你需要的 **PascalVOC** (`.xml`) 和 **YOLO** (`.txt`) 格式，非常方便。
+- 矩形框左上角的 x 坐标
+- 矩形框左上角的 y 坐标
+- 矩形框宽度
+- 矩形框高度
 
- 📖 LabelImg 保姆级使用教程
+常见目录结构类似这样：
 
-启动软件后，请按照以下步骤操作：
+```text
+coco/
+├── annotations/
+│   ├── instances_train2017.json
+│   └── instances_val2017.json
+├── train2017/
+│   ├── 000000000009.jpg
+│   └── ...
+└── val2017/
+    ├── 000000000139.jpg
+    └── ...
+```
 
-**第一步：加载图片**
-*   点击左侧的 **"Open Dir"** 按钮，选择存放图片的文件夹。
-*   点击 **"Change Save Dir"** 按钮，选择一个文件夹用来存放生成的标签文件（建议新建一个 `labels` 文件夹，保持整洁）。
+### 6.2 VOC 格式
 
-**第二步：切换格式（最重要的一步！）**
-*   在左侧工具栏，你会看到一个按钮，默认显示 **"PascalVOC"**。
-    *   如果你需要 **VOC** 格式（生成 `.xml` 文件），保持默认即可。
-    *   如果你需要 **YOLO** 格式（生成 `.txt` 文件），**点击一下这个按钮**，它会变成 **"YOLO"**。
+VOC 也是非常经典的目标检测数据集格式，通常使用 XML 文件保存标注。
 
-**第三步：开始标注**
-*   按快捷键 **`W`**：进入画框模式，鼠标变成十字，在目标物体上拉一个框。
-*   输入标签：画好框后，会弹窗让你输入类别名称（比如 `dog`, `cat`）。
-*   点击 **"OK"** 确认。
+VOC 的边界框通常表示为：
 
-**第四步：保存与切换**
-*   按 **`Ctrl + S`** (Mac 上是 `Command + S`) 保存当前图片的标签。
-*   按 **`D`**：切换到**下一张**图片。
-*   按 **`A`**：切换到**上一张**图片。
+```text
+x_min, y_min, x_max, y_max
+```
 
-**💡 小贴士：**
-*   **自动保存**：点击菜单栏的 `View` -> 勾选 `Auto Save mode`，这样切换图片时会自动保存，不用每次都按保存键，效率翻倍！
-*   **classes.txt**：当你选择 YOLO 格式时，软件会自动在保存目录下生成一个 `classes.txt` 文件，里面记录了所有的类别名称。**千万不要删掉它**，训练的时候需要用到。
+也就是：
 
-### 2.3. 数据集准备
+- 左上角坐标
+- 右下角坐标
 
-我们需要自己准备一个数据集，包含训练图片和对应的标注文件。
+常见目录结构类似这样：
 
-本文一开始使用 labelImg 标注了 20 张图片，最终输出了一个 VOC 格式的数据集，如下图所示。
+```text
+voc/
+├── annotations/
+│   ├── train/
+│   └── val/
+└── images/
+    ├── train/
+    └── val/
+```
 
-![VOC数据集](image.png)
+### 6.3 YOLO 格式
 
-有了数据集后，我们需要考虑数据集的格式。YOLO 并不能直接支持 VOC 格式，我们需要将其转换为 YOLO 格式。
+YOLO 的标注格式更轻量。
 
-我们可以通过一个脚本进行转换，脚本主要做以下几件事：
+它通常是一张图片对应一个同名的 `.txt` 文件。例如：
 
-1. **接收输入参数** ：
-    - `annotations_dir` : 存放原始 XML 文件的文件夹路径。
-    - `labels_dir` : 转换后 TXT 文件要保存的文件夹路径。
-    - `classes` : 一个列表，包含所有类别的名称（例如 `['cat', 'dog']` ）。YOLO 需要数字 ID，我们需要用这个列表来查找名字对应的数字索引。
+```text
+0001.jpg
+0001.txt
+```
 
-2. **获取图片标注信息**：读取并解析每个 XML 文件，提取图片尺寸和所有标注框的信息。
-3. **坐标转化**：将 图片尺寸 和 标注点坐标 转换为 YOLO 格式，并保存到 `labels_dir` 目录下。
+每个 `.txt` 文件里，一行代表一个目标：
+
+```text
+class_id x_center y_center width height
+```
+
+注意：YOLO 中的坐标不是图片中的原始像素值，而是归一化后的比例值，范围在 `[0, 1]` 之间。
+
+例如：
+
+```text
+0 0.512000 0.438000 0.220000 0.180000
+```
+
+可以理解为：
+
+- `0`：类别 ID，对应 `tank`
+- `0.512000`：目标中心点 x 坐标，占整张图宽度的 51.2%
+- `0.438000`：目标中心点 y 坐标，占整张图高度的 43.8%
+- `0.220000`：目标宽度，占整张图宽度的 22%
+- `0.180000`：目标高度，占整张图高度的 18%
+
+YOLO 常见的数据集结构如下：
+
+```text
+custom_dataset/
+├── images/
+│   ├── train/
+│   └── val/
+└── labels/
+    ├── train/
+    └── val/
+```
+
+图片和标签要一一对应：
+
+```text
+images/train/001.jpg
+labels/train/001.txt
+```
+
+---
+
+## 7. 用 LabelImg 标注图片
+
+本文使用的是 **LabelImg**。它是一个经典的开源图片标注工具，优点是轻量、免费、容易上手，并且支持导出 VOC 和 YOLO 格式。
+
+![VOC 数据集示例](image.png)
+
+### 第一步：加载图片
+
+打开 LabelImg 后：
+
+1. 点击 **Open Dir**，选择图片所在文件夹。
+2. 点击 **Change Save Dir**，选择标签文件保存目录。
+
+建议把图片和标签分开放：
+
+```text
+custom_dataset/
+├── images/
+└── annotation/
+```
+
+如果你直接导出 YOLO 格式，也可以使用：
+
+```text
+custom_dataset/
+├── images/
+└── labels/
+```
+
+### 第二步：选择导出格式
+
+LabelImg 左侧会有一个格式按钮，常见状态是：
+
+- `PascalVOC`：导出 `.xml` 文件。
+- `YOLO`：导出 `.txt` 文件。
+
+如果你打算直接训练 YOLO，选择 `YOLO` 最省事。
+
+如果你已经标注成了 VOC 格式，也没关系，后面可以用脚本转换成 YOLO 格式。
+
+### 第三步：开始画框
+
+常用快捷键：
+
+| 快捷键 | 作用 |
+| --- | --- |
+| `W` | 创建矩形框 |
+| `Ctrl + S` / `Command + S` | 保存标注 |
+| `D` | 下一张图片 |
+| `A` | 上一张图片 |
+
+标注时要注意两点：
+
+1. 框尽量贴合目标，不要大面积框到背景。
+2. 同一类目标的名字要保持一致，例如不要一会儿写 `tank`，一会儿写 `Tank`。
+
+类别名不一致，会让模型以为它们是不同类别。
+
+---
+
+## 8. 从 VOC 转成 YOLO 格式
+
+我一开始标注出来的是 VOC 的 `.xml` 文件，所以需要把它转换成 YOLO 的 `.txt` 文件。
+
+转换的核心是把：
+
+```text
+x_min, y_min, x_max, y_max
+```
+
+变成：
+
+```text
+x_center, y_center, width, height
+```
+
+并且全部除以图片宽高，归一化到 `[0, 1]`。
+
+核心公式是：
 
 ```python
+x_center = (xmin + xmax) / 2 / image_width
+y_center = (ymin + ymax) / 2 / image_height
+width = (xmax - xmin) / image_width
+height = (ymax - ymin) / image_height
+```
+
+完整转换函数如下：
+
+```python
+import os
+
+import xmltodict
+
+
 def convert_voc_to_yolo(annotations_dir, labels_dir, classes):
     """
-    将 VOC XML 格式的标注转换为 YOLO TXT 格式
+    将 VOC XML 格式的标注转换为 YOLO TXT 格式。
+
+    annotations_dir: XML 标注文件目录
+    labels_dir: 转换后的 TXT 标签保存目录
+    classes: 类别名称列表，例如 ["tank", "coffee_bean"]
     """
-    if not os.path.exists(labels_dir):
-        os.makedirs(labels_dir)
+    os.makedirs(labels_dir, exist_ok=True)
 
-    print(f"正在将标注从 {annotations_dir} 转换为 YOLO 格式并保存到 {labels_dir}...")
-
-    # 获取所有 XML 文件
     xml_files = [f for f in os.listdir(annotations_dir) if f.endswith(".xml")]
 
     for xml_file in xml_files:
         xml_path = os.path.join(annotations_dir, xml_file)
 
         with open(xml_path, "r", encoding="utf-8") as f:
-            xml_content = f.read()
-            data = xmltodict.parse(xml_content)
+            data = xmltodict.parse(f.read())
 
-        # 获取图片尺寸
         image_width = float(data["annotation"]["size"]["width"])
         image_height = float(data["annotation"]["size"]["height"])
 
-        # 获取文件名（不含扩展名）
         file_id = os.path.splitext(xml_file)[0]
         txt_path = os.path.join(labels_dir, f"{file_id}.txt")
 
-        # 处理对象
         objects = data["annotation"].get("object", [])
         if isinstance(objects, dict):
             objects = [objects]
 
         yolo_lines = []
+
         for obj in objects:
             cls_name = obj["name"]
             if cls_name not in classes:
@@ -230,7 +401,6 @@ def convert_voc_to_yolo(annotations_dir, labels_dir, classes):
             xmax = float(bndbox["xmax"])
             ymax = float(bndbox["ymax"])
 
-            # 转换为 YOLO 格式 (x_center, y_center, width, height) 归一化
             x_center = (xmin + xmax) / 2.0 / image_width
             y_center = (ymin + ymax) / 2.0 / image_height
             width = (xmax - xmin) / image_width
@@ -240,64 +410,179 @@ def convert_voc_to_yolo(annotations_dir, labels_dir, classes):
                 f"{cls_id} {x_center:.6f} {y_center:.6f} {width:.6f} {height:.6f}"
             )
 
-        # 写入 txt 文件
         with open(txt_path, "w", encoding="utf-8") as f:
             f.write("\n".join(yolo_lines))
-
-    print("转换完成！")
-
 ```
 
+假设类别如下：
 
-### 2.4. 数据集配置文件 
+```python
+classes = ["tank", "coffee_bean", "info_device", "quantum_memory"]
+```
 
-YOLO 模型训练时依赖一个 `yaml` 配置文件，用于指定数据集路径、类别信息等。
+那么：
 
-比如说本文的配置文件如下：
+- `tank` 的类别 ID 是 `0`
+- `coffee_bean` 的类别 ID 是 `1`
+- `info_device` 的类别 ID 是 `2`
+- `quantum_memory` 的类别 ID 是 `3`
+
+这里有一个很重要的细节：**类别顺序必须和训练配置里的 `names` 保持一致**。
+
+---
+
+## 9. 编写 YOLO 数据集配置文件
+
+YOLO 训练时需要一个 `data.yaml`，用来告诉模型：
+
+- 数据集根目录在哪里。
+- 训练图片在哪里。
+- 验证图片在哪里。
+- 一共有多少类别，每个类别叫什么。
+
+推荐的正式结构是：
+
+```text
+custom_dataset/
+├── data.yaml
+├── images/
+│   ├── train/
+│   └── val/
+└── labels/
+    ├── train/
+    └── val/
+```
+
+对应的 `data.yaml` 可以这样写：
 
 ```yaml
+path: /Users/bytedance/workspace/pytorch_learning/yolo/custom_dataset
+train: images/train
+val: images/val
+
 names:
   0: tank
   1: coffee_bean
   2: info_device
   3: quantum_memory
+```
+
+如果你只是为了快速跑通流程，暂时没有划分训练集和验证集，也可以让训练和验证使用同一批图片：
+
+```yaml
 path: /Users/bytedance/workspace/pytorch_learning/yolo/custom_dataset
 train: images
 val: images
+
+names:
+  0: tank
+  1: coffee_bean
+  2: info_device
+  3: quantum_memory
 ```
 
+但要注意：这只是演示写法。
 
+如果训练集和验证集是同一批图片，验证指标会偏乐观。模型可能只是记住了这些图片，而不是真的学会了泛化到新截图。
 
+正式训练时，建议至少拆成：
 
-### 2.5 开始训练
+- 80% 图片作为训练集。
+- 20% 图片作为验证集。
 
-YOLO 模型的训练设置包括训练过程中使用的各种超参数和配置。这些设置会影响模型的性能、速度和准确性。这里我们主要关注以下几个方面：
+---
 
-1. `data`：指定训练集和验证集的路径，还包括类别标签和数量等。
-2. `epochs`：训练的总轮数。本文由于数据集较小，设置为 100 轮以让模型过拟合，训练效果更明显。
-3. `imgsz`：用于训练的目标图像大小。图像被调整为边长等于指定值的正方形。
-4. `batch`：批次大小，用于训练时每次处理的图片数量。根据你的显存大小调整。
-6. `device`：指定训练使用的设备，默认是 `cpu`。如果有 GPU，建议设置为 `0` 或 `cuda`， mac 上建议设置为 `mps`。
+## 10. 开始训练
+
+训练代码可以很短：
 
 ```python
+from ultralytics import YOLO
+
 model = YOLO("yolo26n.pt")
 
 results = model.train(
-    data=yaml_path,
-    epochs=100,  # 训练轮数，可根据需要调整。
-    imgsz=640,  # 图片大小
-    batch=4,  # 批次大小，显存小可以调小
-    project=train_project_dir,  # 训练结果保存目录 (绝对路径)
-    name="custom_train",  # 训练实验名称
+    data="custom_dataset/data.yaml",
+    epochs=100,
+    imgsz=640,
+    batch=4,
+    project="train_results",
+    name="custom_train",
 )
 ```
 
-在训练完成后，我们可以在 `train_project_dir` 目录下找到训练结果。其中，有一个 `results.csv` 文件，记录了每一次 epoch
-训练的损失、指标等信息。
+这些参数分别表示：
 
-这个文件 `results.csv` 是 YOLO (You Only Look Once) 模型训练过程中生成的日志文件。它非常重要，记录了模型在每一轮（Epoch）训练后的表现。通过分析这个文件，你可以知道模型是否在变好，是否过拟合，以及何时应该停止训练。
+| 参数 | 含义 | 怎么理解 |
+| --- | --- | --- |
+| `data` | 数据集配置文件路径 | 告诉 YOLO 去哪里找图片和标签 |
+| `epochs` | 训练轮数 | 模型把全部训练数据看多少遍 |
+| `imgsz` | 输入图片尺寸 | 训练前会把图片缩放到这个尺寸附近 |
+| `batch` | 批次大小 | 一次喂给模型多少张图片 |
+| `project` | 输出目录 | 保存训练结果 |
+| `name` | 实验名称 | 区分不同训练实验 |
 
-以下是笔者训练过程中前 5 轮的数据指标：
+如果你是 Mac，并且 PyTorch 支持 MPS，也可以尝试指定：
+
+```python
+results = model.train(
+    data="custom_dataset/data.yaml",
+    epochs=100,
+    imgsz=640,
+    batch=4,
+    device="mps",
+)
+```
+
+如果你有 NVIDIA GPU，可以尝试：
+
+```python
+results = model.train(
+    data="custom_dataset/data.yaml",
+    epochs=100,
+    imgsz=640,
+    batch=4,
+    device=0,
+)
+```
+
+如果显存不够，优先调小 `batch`。比如从 `4` 改成 `2`，甚至改成 `1`。
+
+---
+
+## 11. 训练结果保存在哪里？
+
+训练完成后，通常会生成类似这样的目录：
+
+```text
+train_results/
+└── custom_train/
+    ├── weights/
+    │   ├── best.pt
+    │   └── last.pt
+    ├── results.csv
+    └── ...
+```
+
+其中最重要的是：
+
+- `best.pt`：验证集指标最好的模型权重，通常用于最终预测。
+- `last.pt`：最后一轮训练结束时的模型权重。
+- `results.csv`：每一轮训练的损失和指标。
+
+一般情况下，我们会优先使用：
+
+```text
+train_results/custom_train/weights/best.pt
+```
+
+---
+
+## 12. 如何看懂 results.csv？
+
+训练结束后，`results.csv` 会记录每个 epoch 的表现。
+
+下面是一个训练前 5 轮的示例：
 
 | epoch | time | train/box_loss | train/cls_loss | train/dfl_loss | metrics/precision(B) | metrics/recall(B) | metrics/mAP50(B) | metrics/mAP50-95(B) | val/box_loss | val/cls_loss | val/dfl_loss | lr/pg0 | lr/pg1 | lr/pg2 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -307,143 +592,312 @@ results = model.train(
 | 4 | 49.3252 | 0.94532 | 11.0331 | 0.01499 | 0.01483 | 0.71875 | 0.08517 | 0.03963 | 0.79102 | 15.9954 | 0.01846 | 0.000230446 | 0.000230446 | 0.000230446 |
 | 5 | 61.7327 | 0.9305 | 10.5206 | 0.0189 | 0.00965 | 0.47917 | 0.08202 | 0.04612 | 0.77071 | 15.8946 | 0.01763 | 0.00028812 | 0.00028812 | 0.00028812 |
 
+第一次看到这个表，可能会有点密集。其实可以先抓住两个方向：
 
-这个表格主要分为五大类信息：**基本信息**、**训练损失 (Train Loss)**、**评估指标 (Metrics)**、**验证损失 (Validation Loss)** 和 **学习率 (Learning Rate)**。
+- Loss 越低越好。
+- Metrics 越高越好。
 
-1. **基本信息 (Basic Information)**：这些字段告诉你训练进行到了哪里。
+### 12.1 训练损失：模型在练习题上错得多不多
 
-*   **`epoch` (轮次)**:
-    *   **含义**: 训练的轮数。模型把所有训练数据完整地看一遍，叫一个 Epoch。
-    *   **作用**: 就像你复习课本，复习第一遍是 Epoch 1，复习第二遍是 Epoch 2。通常复习次数越多，记得越牢（但复习太多也可能死记硬背，即过拟合）。
-*   **`time` (时间)**:
-    *   **含义**: 这一轮训练所花费的时间。
-    *   **作用**: 让你知道训练大概需要多久。
+训练损失看的是模型在训练集上的表现。
 
-2. **训练损失 (Train Loss)**
-这些指标越**低**越好。它们表示模型在**训练集**（平时做的练习题）上犯错的程度。
+| 指标 | 含义 | 通俗解释 |
+| --- | --- | --- |
+| `train/box_loss` | 框的位置误差 | 模型画的框和真实框差多少 |
+| `train/cls_loss` | 类别判断误差 | 模型有没有把类别认错 |
+| `train/dfl_loss` | 边界框细化误差 | 帮助模型把框的位置调得更精细 |
 
-*   **`train/box_loss` (定位损失)**:
-    *   **含义**: 模型预测的框（Bounding Box）和真实物体的框之间的差距。
-    *   **通俗解释**: 比如你要圈出图中的猫，你画的圈和实际猫的位置差了多少。这个值越小，说明圈得越准。
-*   **`train/cls_loss` (分类损失)**:
-    *   **含义**: 模型判断物体类别（Class）错得有多离谱。
-    *   **通俗解释**: 比如图里是“猫”，模型猜是“狗”，这个损失就会大。这个值越小，说明模型认物体认得越准。
-*   **`train/dfl_loss` (分布焦点损失 - Distribution Focal Loss)**:
-    *   **含义**: 用于微调框的边界，处理框的模糊性。
-    *   **通俗解释**: 这是为了让框画得更精细。你可以简单理解为它是 `box_loss` 的补充，也是越小越好。
+这些值通常越低越好。
 
-3. **评估指标 (Metrics)**
-这些指标越**高**越好。它们表示模型在**验证集**（模拟考试）上的表现。这里面的 `(B)` 代表 Box，即针对目标检测框的指标。
+如果训练过程中 loss 一直下降，说明模型正在学习训练集里的规律。
 
-*   **`metrics/precision(B)` (查准率/精确率)**:
-    *   **含义**: 模型预测出的所有目标中，有多少是正确的。
-    *   **通俗解释**: 模型说“这里有10只猫”，实际上这10个里面只有8个真的是猫，那精确率就是 0.8 (80%)。**“宁缺毋滥”**的指标。
-*   **`metrics/recall(B)` (查全率/召回率)**:
-    *   **含义**: 所有真实存在的目标中，模型找出了多少。
-    *   **通俗解释**: 图片里实际上有10只猫，模型只找出来了6只，那召回率就是 0.6 (60%)。**“一个都不能少”**的指标。
-*   **`metrics/mAP50(B)` (平均精度均值 @ IoU=0.5)**:
-    *   **含义**: 这是一个综合指标。`IoU=0.5` 意思是你画的框和真实框重叠度达到 50% 就算对。
-    *   **重要性**: 这是衡量模型好坏**最常用**的单一指标。如果在 IoU=0.5 的宽松标准下，模型综合表现如何。
-*   **`metrics/mAP50-95(B)` (平均精度均值 @ IoU=0.5:0.95)**:
-    *   **含义**: 这是一个更严格的综合指标。它计算了从 IoU=0.5 到 IoU=0.95（重叠度要求很高）各种情况下的平均表现。
-    *   **重要性**: 这个值越高，说明模型不仅能找到物体，而且框画得非常非常准。
+### 12.2 验证指标：模型在模拟考试上表现如何
 
-4. **验证损失 (Validation Loss)**
-这些指标也是越**低**越好。它们表示模型在**验证集**（模拟考试）上的犯错程度。
+验证指标看的是模型在验证集上的表现。
 
-*   **`val/box_loss`**: 验证集上的定位损失。
-*   **`val/cls_loss`**: 验证集上的分类损失。
-*   **`val/dfl_loss`**: 验证集上的精细化定位损失。
-*   **重要性**: 如果 **训练损失 (Train Loss)** 一直在下降，但 **验证损失 (Validation Loss)** 却开始上升，说明模型**过拟合**了（只会做练习题，不会做新题），这时候通常应该停止训练。
+| 指标 | 含义 | 通俗解释 |
+| --- | --- | --- |
+| `metrics/precision(B)` | 精确率 | 模型框出来的目标里，有多少是真的 |
+| `metrics/recall(B)` | 召回率 | 真实存在的目标里，模型找到了多少 |
+| `metrics/mAP50(B)` | 宽松标准下的综合分 | 框和真实框重叠超过 50% 就算比较合格 |
+| `metrics/mAP50-95(B)` | 更严格的综合分 | 从宽松到严格多个标准一起平均 |
 
-5. **学习率 (Learning Rate)**：这是模型学习步伐的大小。
+精确率和召回率可以这样理解：
 
-*   **`lr/pg0`, `lr/pg1`, `lr/pg2`**:
-    *   **含义**: 分别对应模型不同参数组（如权重、偏置等）的学习率。
-    *   **作用**: 就像你学习新知识，刚开始可能学得快（学习率大），后面为了学精细，需要慢下来（学习率变小）。你会发现这些值通常会随着 Epoch 增加而慢慢变小。
+- 精确率高：模型比较谨慎，框出来的大多是对的。
+- 召回率高：模型比较积极，尽量不漏掉目标。
 
----
+`mAP50` 是很多目标检测任务里最常被关注的指标之一。它越高，通常说明模型检测效果越好。
 
-6. **总结：如何看这个表？**
+`mAP50-95` 更严格，它不仅要求找到目标，还要求框的位置更准。
 
-1.  **看趋势**: 随着 `epoch` 增加，`loss` (各种损失) 应该**往下走**，`metrics` (mAP, Precision, Recall) 应该**往上走**。
-2.  **看好坏**: 重点关注 **`metrics/mAP50(B)`**。这个值越高，说明你的模型在检测任务上越厉害。
-3.  **看问题**: 如果 `val/loss` 不降反升，说明训练得差不多了，或者出问题了。
+### 12.3 什么时候说明过拟合了？
+
+过拟合可以简单理解为：
+
+> 模型把练习题背熟了，但换一道新题就不会了。
+
+在训练曲线上，它常见的表现是：
+
+- `train loss` 继续下降。
+- `val loss` 不降反升。
+- 验证集指标不再提升，甚至开始变差。
+
+如果出现这种情况，可以考虑：
+
+1. 增加数据量。
+2. 做数据增强。
+3. 减少训练轮数。
+4. 使用更小的模型。
+5. 重新检查标注质量。
 
 ---
 
-### 2.6. 模型预测
+## 13. 使用训练好的模型预测
 
-训练完成后，权重会保存在 `runs/detect/train/weights/best.pt`。
-此时这个 `best.pt` 就是一个 **YOLOv26** 架构的针对 三角洲行动 中的 **“大红-坦克”** 目标检测器了！
+训练完成后，就可以加载 `best.pt` 做预测。
 
-新建 `predict_custom.py`，这里我们直接对训练集的图片做推理：
+新建 `predict_custom.py`：
 
 ```python
+import os
+
 from ultralytics import YOLO
 
-# 1. 加载我们训练好的 YOLOv26 模型
-model = YOLO('runs/detect/train/weights/best.pt')
 
-test_image_path = "custom_dataset/images"
-images_path = [
-    os.path.join(test_image_path, f)
-    for f in os.listdir(test_image_path)
-    if f.lower().endswith((".jpg", ".jpeg", ".png", ".bmp"))
+model = YOLO("train_results/custom_train/weights/best.pt")
+
+# 如果你已经拆分了 train/val，可以把这里改成 custom_dataset/images/val。
+# 如果你像本文演示一样暂时使用扁平目录，就保持 custom_dataset/images。
+test_image_dir = "custom_dataset/images"
+image_paths = [
+    os.path.join(test_image_dir, filename)
+    for filename in os.listdir(test_image_dir)
+    if filename.lower().endswith((".jpg", ".jpeg", ".png", ".bmp"))
 ]
-# 2. 预测
-# conf=0.5: 只显示置信度大于 0.3 的框，过滤掉不确定的结果
-model.predict(source=images_path, save=True, conf=0.3) 
+
+model.predict(
+    source=image_paths,
+    save=True,
+    conf=0.3,
+    project="train_results",
+    name="custom_predict",
+)
 ```
+
+这里的 `conf=0.3` 是置信度阈值。
+
+它的意思是：如果模型对某个检测框的信心低于 0.3，就不显示这个框。
+
+如果你发现模型漏检比较多，可以适当降低 `conf`。
+
+如果你发现模型误检比较多，可以适当提高 `conf`。
+
 ---
 
+## 14. 如果只用 20 张图片，效果靠谱吗？
 
-## 3. 自己实现一个目标检测模型会有多难呢？
+这要看你的目标是什么。
 
-想要自己实现一个目标检测模型，首先我们需要明确目标检测模型的核心步骤是哪些：
+如果目标是学习完整流程，20 张图片足够跑通：
 
-1. 设计网络模型结构
+- 标注。
+- 转格式。
+- 写配置。
+- 训练。
+- 预测。
+- 看指标。
 
-2. 设计一个合适的损失函数
+但如果目标是做一个稳定可用的检测器，20 张图片通常是不够的。
 
+原因很简单：模型见过的情况太少。
 
-### 3.1. 前置基础
+真实场景里，同一个目标可能会有很多变化：
 
+- 角度不同。
+- 亮度不同。
+- 大小不同。
+- 背景不同。
+- 遮挡不同。
+- 截图清晰度不同。
 
-#### 3.1.1. 明确网络模型的输入和输出
+数据太少时，模型可能只记住了训练图片的特征，而没有学会真正泛化。
 
-首先我们要明确最终模型的输入和输出。
+所以这类小数据集实验更适合理解流程。想要提升效果，优先考虑这几个方向：
 
-针对“目标检测”这一目标而言，**模型的输入**始终是一张图片。而**输出**则是一个包含所有检测到的目标的列表，每个目标包含其类别、置信度和边界框坐标。
+1. 增加图片数量。
+2. 增加场景多样性。
+3. 检查标注是否准确。
+4. 合理划分训练集和验证集。
+5. 对容易混淆的类别补充更多样本。
 
-输出格式示例：
+---
 
+## 15. 自己实现一个目标检测模型会有多难？
+
+前面我们使用的是成熟的 YOLO 工具链。它帮我们封装了大量细节。
+
+如果要自己从零实现一个目标检测模型，首先至少要处理两个核心问题：
+
+1. 设计网络结构。
+2. 设计损失函数。
+
+### 15.1 输入和输出
+
+目标检测模型的输入是一张图片。
+
+输出则要同时回答两个问题：
+
+- 定位：目标在哪里？
+- 分类：目标是什么？
+
+一个简化后的输出可以理解为：
+
+`[center_x, center_y, width, height, class_score_1, class_score_2, class_score_3, class_score_4]`
+
+例子如下：
+
+```bash
 | Target | centerX | centerY | width | height | Class1 | Class2 | Class3 | Class4 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 坦克 | 0.5 | 0.5 | 0.2 | 0.3 | 1.8 | -2.5 | 0.2 | -0.2 |
+```
 
-我们想要的预测值跟这个格式是一样的，只不过类别肯定采用 one-hot 编码表示，简单来说就是只有一个确定的类别为 1，其他全为 0。
+这里可以分成两部分：
 
-| Target | centerX | centerY | width | height | Class1 | Class2 | Class3 | Class4 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 坦克 | 0.48 | 0.48 | 0.21 | 0.33 | 1.0 | 0 | 0 | 0 |
+- `centerX, centerY, width, height`：负责描述位置。
+- `Class1, Class2, Class3, Class4`：负责描述类别。
 
-#### 3.1.2. 设计合适的损失函数
+位置预测本质上更像回归问题。
 
-对于上一节所设计的网络模型的输出，我们需要一个合适的损失函数来训练它。我们很明显可以发现。
+类别预测本质上更像分类问题。
 
-对于输出的坐标位置而言，我们希望是与预测值之间的差异越小越好，这实际上是一个**回归问题**。对于回归问题，我们常用 `MSE` 损失函数去衡量预测值与真实值之间的差异。
+所以目标检测难就难在：它不是单一任务，而是“定位 + 分类”的组合任务。
 
-而对于类别置信度而言，我们希望是与真实的类别标签之间的差异越小越好，这实际上是一个**分类问题**，常用的损失函数是 `CrossEntropyLoss`。
+### 15.2 坐标损失
+
+对于框的位置，我们希望预测框越接近真实框越好。
+
+如果只是做一个非常简化的模型，可以先用 MSE 这类回归损失来理解：
+
+```text
+预测框坐标和真实框坐标越接近，损失越小。
+```
+
+但真实目标检测模型通常会使用更复杂的框回归损失，因为它要考虑框的重叠面积、中心点距离、宽高比例等因素。
+
+### 15.3 分类损失
+
+对于类别，我们希望模型把正确类别的分数变高，把错误类别的分数变低。
+
+模型直接输出的通常不是概率，而是 logits。
+
+例如：
+
+```text
+[1.8, -2.5, 0.2, -0.2]
+```
+
+这些数字经过 softmax 后，会变成概率分布：
+
+```text
+[0.74, 0.01, 0.15, 0.10]
+```
+
+也就是说，模型认为第一个类别的概率最高。
+
+![CrossEntropyLoss](image-1.png)
+
+分类任务中常见的损失函数是 `CrossEntropyLoss`。它会惩罚错误分类，并鼓励模型把正确类别的概率推高。
+
+因此在这次实现中，我们的损失函数就是：**总损失 = 坐标损失 + 分类损失**
+
+也就是：
+
+`loss = bbox_loss + class_loss`
 
 
-下面简单介绍一下 `CrossEntropyLoss` 损失函数。
+### 15.4 网络模型的设计
 
-> ![CrossEntropyLoss](image-1.png)
-以上一节的示例而言，我们的模型输出并不是一个概率分布的数字，而是 Logits。我们需要对其进行 softmax 操作，将其转换为一个概率分布。
-![Softmax](https://images.contentstack.io/v3/assets/bltac01ee6daa3a1e14/blte5e1674e3883fab3/65ef8ba4039fdd4df8335b7c/img_blog_image1_inline_(2).png?width=1024&disable=upscale&auto=webp)
-由于 Exp 函数有着指数增长的性质，当输入值很大时，输出值会非常大，而当输入值很小时，输出值会非常接近 0。因此计算 Softmax 后，负数的输出值会非常小，而正数的输出值会非常大，更能够表示其所属类别的概率。
-> 上述的 `[ 1.8 , -2.5 , 0.2 , -0.2 ]` 经过 Softmax 操作后，得到的概率分布为 `[ 0.74 , 0.01 , 0.15 ,  0.10]`
->> `exp(1.8) / (exp(1.8) + exp(-2.5) + exp(0.2) + exp(-0.2)) = 0.74`
+明确了输入和输出，以及损失函数的设计后，剩下的就是如何去设计网络模型了。
+
+在一个模型网络中，我们可以根据功能来将网络分成不同的部分。以目标检测为例，功能一共可以分为：
+
+```text
+                                                     ┌──────────────┐
+                                                ┌──▶ │  class_head  │
+┌────────┐    ┌──────────┐    ┌──────────────┐  │    │   预测类别    │
+│ 输入图片 │──▶│ Backbone │──▶ │ Pool + Shared│ ─┬┘   └──────────────┘
+│        │    │ 提取特征  │    │  压缩整理特征  │  │
+└────────┘    └──────────┘    └──────────────┘  │      ┌──────────────┐
+                                                └────▶ │  bbox_head   │
+                                                       │   预测边框    │
+                                                       └──────────────┘
+```
+
+#### 15.4.1 Backbone：提取图像特征
+
+首先需要实现 Backbone 部分，下面采用简单的多层卷积+池化网络结构来提取图像特征：
+
+```python
+class MyYolo(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.backbone = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2),
+            # 第二层卷积：通道从 32 -> 64
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2),
+            # 第三层卷积：通道从 64 -> 128
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2),
+            # 第四层卷积：通道从 128 -> 256
+            nn.Conv2d(128, 256, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2),
+        )
+        self.share = nn.Sequential(
+            nn.Flatten(),
+            # 假设图片都是 64*64，所以最终会变成 4*4 大小
+            nn.Linear(256 * 4 * 4, 1024),
+            nn.ReLU(),
+        )
+
+    def forward(self, x):
+        x = self.backbone(x)
+        x = self.share(x)
+        return x
+```
 
 
+### 15.5 DataLoader 实现
+
+---
+
+## 16. 这次实战我最大的收获
+
+目标检测刚开始看起来很复杂，因为它同时涉及图片、标注、坐标、模型、训练指标和推理结果。
+
+但把流程拆开以后，它其实是一条很清晰的链路：
+
+```text
+图片 -> 标注 -> 标签格式 -> data.yaml -> 训练 -> best.pt -> 预测结果
+```
+
+我觉得最重要的不是记住某个参数怎么写，而是理解这几件事：
+
+1. 模型不是凭空“认识”目标的，它是从标注数据里学出来的。
+2. YOLO 标签里的坐标是归一化比例，不是原始像素。
+3. 训练指标不能只看训练集，还要看验证集。
+4. 小数据集可以帮助你跑通流程，但不能代表模型真的足够稳。
+5. 先调通工具链，再深入理解模型原理，是更适合初学者的路径。
+
+如果你也想做自己的目标检测项目，可以先不要追求一步到位。
+
+先准备十几张图片，手动标注，训练一个非常小的模型，让它能在你的图片里框出目标。
+
+当你第一次看到模型把自己关心的东西框出来时，整个目标检测流程就会突然变得具体起来。
