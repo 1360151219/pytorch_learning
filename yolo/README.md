@@ -837,7 +837,11 @@ model.predict(
 
 #### 15.4.1 Backbone：提取图像特征
 
-首先需要实现 Backbone 部分，下面采用简单的多层卷积+池化网络结构来提取图像特征：
+首先需要实现 Backbone 部分。Backbone 可以理解为模型的“眼睛”：它不直接负责输出最终类别和边界框，而是先把原始图片转换成更抽象的特征。
+
+比如一张原始图片里只有 RGB 像素值，模型一开始并不知道哪里是边缘、哪里是纹理、哪里像履带、哪里像炮塔。Backbone 要做的事情，就是通过一层层卷积把这些低级像素逐步提炼成更有语义的信息。
+
+为了先理解流程，下面采用简单的多层卷积+池化网络结构来提取图像特征：
 
 ```python
 class MyYolo(nn.Module):
@@ -873,8 +877,80 @@ class MyYolo(nn.Module):
         return x
 ```
 
+这个写法的优点是结构简单，适合用来理解“卷积提特征、池化压缩尺寸、全连接层整理特征”的基本过程。
+
+但它也有一个明显问题：这个 Backbone 是从零开始训练的。对于只有几十张或者几百张图片的小数据集来说，模型很难学到足够稳定的图像特征。它可能还没真正理解“坦克长什么样”，就已经把训练集里的几张截图背下来了。
+
+所以如果想让效果更好，一个常见做法是：**不要完全从零设计 Backbone，而是使用已有的成熟模型结构作为特征提取器**。
+
+例如可以使用 VGG、ResNet、MobileNet 这类已经在大规模图像数据上训练过的网络。它们前面的卷积层已经学到了一些通用视觉特征，比如：
+
+- 边缘和角点。
+- 颜色和纹理。
+- 局部形状。
+- 更高层的物体部件特征。
+
+这类通用特征不只对 ImageNet 分类任务有用，对自己的小型目标检测任务也有帮助。我们可以把这些成熟网络当作 Backbone，后面再接自己的 `class_head` 和 `bbox_head`。
+
+用 VGG16 做 Backbone 的简化示例如下：
+
+```python
+import torch.nn as nn
+from torchvision.models import VGG16_Weights, vgg16
+
+
+class MyYoloWithVGG(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        # 加载在 ImageNet 上预训练过的 VGG16。
+        vgg = vgg16(weights=VGG16_Weights.DEFAULT)
+
+        # VGG 的 features 部分主要由卷积层和池化层组成，适合作为 Backbone。
+        self.backbone = vgg.features
+
+        # 用自适应池化把不同输入尺寸的特征图统一压缩到固定大小。
+        self.pool = nn.AdaptiveAvgPool2d((7, 7))
+
+        # VGG16 features 的输出通道数是 512。
+        self.share = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(512 * 7 * 7, 1024),
+            nn.ReLU(),
+        )
+
+    def forward(self, x):
+        x = self.backbone(x)
+        x = self.pool(x)
+        x = self.share(x)
+        return x
+```
+
+这段代码里最关键的是：
+
+```python
+self.backbone = vgg.features
+```
+
+因为 VGG16 可以分成两大部分：
+
+- `features`：前面的卷积网络，负责提取图像特征。
+- `classifier`：后面的分类器，负责 ImageNet 的 1000 类分类。
+
+我们做目标检测时，并不需要 VGG 原本的 1000 类分类器，所以只保留 `features` 作为 Backbone，然后把后面的预测头换成自己的结构。
+
+可以把这理解成两种训练方式：
+
+| 方式 | 含义 | 适合场景 |
+| --- | --- | --- |
+| 从零训练 Backbone | 所有特征都让模型自己学 | 数据量比较大，算力充足 |
+| 使用预训练 Backbone | 复用成熟模型学过的视觉特征 | 数据量较小，希望更快得到可用效果 |
+
+
 
 ### 15.5 DataLoader 实现
+
+
 
 ---
 
