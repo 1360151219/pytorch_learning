@@ -735,64 +735,261 @@ model.predict(
 
 ## 15. 自己实现一个目标检测模型会有多难？
 
-前面我们使用的是成熟的 YOLO 工具链。它帮我们封装了大量细节。
+前面我们使用的是成熟的 YOLO 工具链。它帮我们封装了数据读取、网络结构、损失函数、训练循环、预测后处理等大量细节。
 
-如果要自己从零实现一个目标检测模型，首先至少要处理两个核心问题：
+如果想自己实现一个目标检测模型，不建议一上来就复刻完整 YOLO。更适合初学者的方式是先做一个**简化版单目标检测器**：
 
-1. 设计网络结构。
-2. 设计损失函数。
+> 输入一张图片，模型只预测一个目标框，以及这个目标属于哪个类别。
 
-### 15.1 输入和输出
+这个版本不追求工程完整性，而是帮助我们把目标检测最核心的链路跑通。
 
-目标检测模型的输入是一张图片。
-
-输出则要同时回答两个问题：
-
-- 定位：目标在哪里？
-- 分类：目标是什么？
-
-一个简化后的输出可以理解为：
-
-`[center_x, center_y, width, height, class_score_1, class_score_2, class_score_3, class_score_4]`
-
-例子如下：
-
-```bash
-| Target | centerX | centerY | width | height | Class1 | Class2 | Class3 | Class4 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 坦克 | 0.5 | 0.5 | 0.2 | 0.3 | 1.8 | -2.5 | 0.2 | -0.2 |
-```
-
-这里可以分成两部分：
-
-- `centerX, centerY, width, height`：负责描述位置。
-- `Class1, Class2, Class3, Class4`：负责描述类别。
-
-位置预测本质上更像回归问题。
-
-类别预测本质上更像分类问题。
-
-所以目标检测难就难在：它不是单一任务，而是“定位 + 分类”的组合任务。
-
-### 15.2 坐标损失
-
-对于框的位置，我们希望预测框越接近真实框越好。
-
-如果只是做一个非常简化的模型，可以先用 MSE 这类回归损失来理解：
+这一节可以按下面的路线理解：
 
 ```text
-预测框坐标和真实框坐标越接近，损失越小。
+限定问题范围 -> 设计标签格式 -> 转换标注数据 -> 设计网络结构 -> 设计损失函数 -> 接入 DataLoader 和训练循环
 ```
 
-但真实目标检测模型通常会使用更复杂的框回归损失，因为它要考虑框的重叠面积、中心点距离、宽高比例等因素。
+也就是说，自己实现目标检测时，不是先随便写一个网络，而是要先想清楚三件事：
 
-### 15.3 分类损失
+1. 模型要输出什么？
+2. 标签要整理成什么格式？
+3. 输出和标签之间怎么计算损失？
 
-对于类别，我们希望模型把正确类别的分数变高，把错误类别的分数变低。
+只要这三件事对齐，后面的模型结构和训练代码才有意义。
 
-模型直接输出的通常不是概率，而是 logits。
+### 15.1 模型的输出格式
 
-例如：
+模型输出可以设计成：
+
+```text
+[center_x, center_y, width, height, class_score_1, class_score_2, class_score_3, class_score_4]
+```
+
+前 4 个数字表示目标框（经过归一化）：
+
+- `center_x`：目标中心点的 x 坐标。
+- `center_y`：目标中心点的 y 坐标。
+- `width`：目标框宽度。
+- `height`：目标框高度。
+
+后 4 个数字表示类别分数。
+
+这个简化版检测器把目标检测拆成两个最基本的问题：
+
+```text
+定位：框在哪里？
+分类：框里的东西是什么？
+```
+
+### 15.2 数据转换：训练数据格式化
+
+既然模型输出格式我们已经规定好了，接下来就需要讲训练数据进行格式化。
+
+在 LabelImg 中标注图片时，我使用的是 VOC 格式。VOC 的 XML 文件里，目标框通常记录为：
+
+```text
+xmin, ymin, xmax, ymax
+```
+
+也就是矩形框左上角和右下角的像素坐标。
+
+但自定义模型需要的是：
+
+```text
+center_x, center_y, width, height
+```
+
+并且这些值最好归一化到 `[0, 1]`，这样模型不会强依赖某一种图片尺寸。
+
+数据转换逻辑可以概括成 4 步：
+
+```text
+读取 XML -> 取出图片宽高和目标框 -> 坐标归一化 -> 拼接 one-hot 类别并保存 TXT
+```
+
+```python
+classes = ["tank", "coffee_bean", "info_device", "quantum_memory"]
+
+label_name = obj["name"]
+label_index = classes.index(label_name)
+
+xmin = float(obj["bndbox"]["xmin"])
+xmax = float(obj["bndbox"]["xmax"])
+ymin = float(obj["bndbox"]["ymin"])
+ymax = float(obj["bndbox"]["ymax"])
+
+x_center = (xmin + xmax) / 2.0 / file_width
+y_center = (ymin + ymax) / 2.0 / file_height
+width = (xmax - xmin) / file_width
+height = (ymax - ymin) / file_height
+
+one_hot = [0] * len(classes)
+one_hot[label_index] = 1
+one_hot_str = " ".join(str(h) for h in one_hot)
+
+line = f"{x_center:.6f} {y_center:.6f} {width:.6f} {height:.6f} {one_hot_str}"
+```
+
+转换后，一行标签代表一个目标：
+
+```text
+0.500000 0.500000 0.200000 0.300000 1 0 0 0
+```
+
+如果一张图片里有多个目标，转换后的 TXT 文件里就会有多行。
+
+### 15.3 网络结构：Backbone + Shared + Head
+
+有了标签格式以后，再来看网络结构会更清楚。
+
+模型要做两件事：
+
+1. 预测目标框位置。
+2. 预测目标类别。
+
+所以网络可以拆成三部分：
+
+```text
+                                                     ┌──────────────┐
+                                                ┌──▶ │  class_head  │
+┌────────┐    ┌──────────┐    ┌──────────────┐  │    │   预测类别    │
+│ 输入图片 │──▶│ Backbone │──▶ │ Pool + Shared│ ─┬┘   └──────────────┘
+│        │    │ 提取特征  │    │  压缩整理特征  │  │
+└────────┘    └──────────┘    └──────────────┘  │      ┌──────────────┐
+                                                └────▶ │  bbox_head   │
+                                                       │   预测边框    │
+                                                       └──────────────┘
+```
+
+- `Backbone`：提取图像特征。
+- `Pool + Shared`：把特征图压缩并整理成固定长度的特征向量。
+- `bbox_head`：输出 4 个坐标值。
+- `class_head`：输出类别分数。
+
+#### 15.3.1 Backbone：提取图像特征
+
+Backbone 可以理解为模型的“眼睛”：它不直接输出最终类别和边界框，而是先把原始图片转换成更抽象的特征。
+
+最容易理解的 Backbone 是多层卷积 + 池化：
+
+```python
+self.backbone = nn.Sequential(
+    nn.Conv2d(3, 32, kernel_size=3, padding=1),
+    nn.ReLU(),
+    nn.MaxPool2d(kernel_size=2),
+    nn.Conv2d(32, 64, kernel_size=3, padding=1),
+    nn.ReLU(),
+    nn.MaxPool2d(kernel_size=2),
+    nn.Conv2d(64, 128, kernel_size=3, padding=1),
+    nn.ReLU(),
+    nn.MaxPool2d(kernel_size=2),
+    nn.Conv2d(128, 256, kernel_size=3, padding=1),
+    nn.ReLU(),
+    nn.MaxPool2d(kernel_size=2),
+)
+```
+
+这个写法适合理解原理，但缺点是所有特征都要从零开始学。对于小数据集来说，效果通常不会太稳定。
+
+所以更实用的做法是使用已有模型作为 Backbone，比如 VGG、ResNet、MobileNet。以 VGG16 为例：
+
+```python
+import torch.nn as nn
+from torchvision.models import VGG16_Weights, vgg16
+
+
+class MyYolo(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.backbone = vgg16(weights=VGG16_Weights.DEFAULT).features
+        self.pool = nn.AdaptiveAvgPool2d((10, 10))
+        self.share = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(512 * 10 * 10, 1024),
+            nn.ReLU(),
+        )
+
+    def forward(self, x):
+        x = self.backbone(x)
+        x = self.pool(x)
+        x = self.share(x)
+        return x
+```
+
+这里最关键的是：
+
+```python
+self.backbone = vgg16(weights=VGG16_Weights.DEFAULT).features
+```
+
+VGG16 可以分成两部分：
+
+- `features`：前面的卷积网络，负责提取图像特征。
+- `classifier`：后面的分类器，负责 ImageNet 的 1000 类分类。
+
+我们做自己的目标检测时，不需要 VGG 原本的 1000 类分类器，只需要复用它前面的特征提取能力。
+
+可以把两种 Backbone 方案简单对比如下：
+
+| 方式 | 含义 | 适合场景 |
+| --- | --- | --- |
+| 从零训练 Backbone | 所有特征都让模型自己学 | 数据量比较大，算力充足 |
+| 使用预训练 Backbone | 复用成熟模型学过的视觉特征 | 数据量较小，希望更快得到可用效果 |
+
+#### 15.3.2 Head：分别预测坐标和类别
+
+Backbone 输出的是图像特征，还不是最终结果。我们还需要两个预测头：
+
+```python
+self.bbox_head = nn.Linear(1024, 4)
+self.class_head = nn.Linear(1024, len(classes))
+```
+
+前向传播时可以这样写：
+
+```python
+def forward(self, x):
+    x = self.backbone(x)
+    x = self.pool(x)
+    x = self.share(x)
+
+    bbox = self.bbox_head(x)
+    cls_logits = self.class_head(x)
+
+    return bbox, cls_logits
+```
+
+这样模型的输出就和前面设计的标签格式对应起来了：
+
+```text
+bbox        -> center_x, center_y, width, height
+cls_logits  -> class_score_1, class_score_2, class_score_3, class_score_4
+```
+
+### 15.5 损失函数：坐标损失 + 分类损失
+
+模型输出分成两部分，损失函数也可以分成两部分。
+
+#### 15.5.1 坐标损失
+
+坐标预测本质上是回归问题。
+
+如果只是做一个简化版本，可以先用 MSE 来理解：
+
+```text
+预测框坐标和真实框坐标越接近，bbox_loss 越小。
+```
+
+真实目标检测模型通常会使用更复杂的框回归损失，因为它还要考虑框的重叠面积、中心点距离、宽高比例等因素。
+
+但在学习阶段，先用 MSE 跑通流程是可以的。
+
+#### 15.5.2 分类损失
+
+类别预测本质上是分类问题。
+
+模型直接输出的通常不是概率，而是 logits。例如：
 
 ```text
 [1.8, -2.5, 0.2, -0.2]
@@ -810,147 +1007,147 @@ model.predict(
 
 分类任务中常见的损失函数是 `CrossEntropyLoss`。它会惩罚错误分类，并鼓励模型把正确类别的概率推高。
 
-因此在这次实现中，我们的损失函数就是：**总损失 = 坐标损失 + 分类损失**
+所以这个简化模型的总损失就是：
 
-也就是：
+```python
+loss = bbox_loss + class_loss
+```
 
-`loss = bbox_loss + class_loss`
+也可以写得更明确一点：
 
+```python
+bbox_loss = mse_loss(pred_bbox, target_bbox)
+class_loss = cross_entropy_loss(pred_class_logits, target_class)
+loss = bbox_loss + class_loss
+```
 
-### 15.4 网络模型的设计
+### 15.6 DataLoader
 
-明确了输入和输出，以及损失函数的设计后，剩下的就是如何去设计网络模型了。
-
-在一个模型网络中，我们可以根据功能来将网络分成不同的部分。以目标检测为例，功能一共可以分为：
+完成标签转换后，就需要把磁盘上的图片和 TXT 标签读取出来，变成模型可以训练的数据，这就需要用到 `DataLoader` 了，它的职责包括：
 
 ```text
-                                                     ┌──────────────┐
-                                                ┌──▶ │  class_head  │
-┌────────┐    ┌──────────┐    ┌──────────────┐  │    │   预测类别    │
-│ 输入图片 │──▶│ Backbone │──▶ │ Pool + Shared│ ─┬┘   └──────────────┘
-│        │    │ 提取特征  │    │  压缩整理特征  │  │
-└────────┘    └──────────┘    └──────────────┘  │      ┌──────────────┐
-                                                └────▶ │  bbox_head   │
-                                                       │   预测边框    │
-                                                       └──────────────┘
+遍历 my_annotation 目录 -> 根据 txt 文件名找到同名图片 -> 读取图片 -> 读取 bbox 和 class -> 返回给训练循环
 ```
 
-#### 15.4.1 Backbone：提取图像特征
-
-首先需要实现 Backbone 部分。Backbone 可以理解为模型的“眼睛”：它不直接负责输出最终类别和边界框，而是先把原始图片转换成更抽象的特征。
-
-比如一张原始图片里只有 RGB 像素值，模型一开始并不知道哪里是边缘、哪里是纹理、哪里像履带、哪里像炮塔。Backbone 要做的事情，就是通过一层层卷积把这些低级像素逐步提炼成更有语义的信息。
-
-为了先理解流程，下面采用简单的多层卷积+池化网络结构来提取图像特征：
+核心代码如下：
 
 ```python
-class MyYolo(nn.Module):
+class MyDataLoader:
+     def __getitem__(self, index):
+        trans = transforms.ToTensor()
+        name = self.files[index]
+        file_name = os.path.splitext(name)[0]
+
+        with open(
+            os.path.join(my_annotation_dir, file_name + ".txt"), "r", encoding="utf-8"
+        ) as f:
+            content = f.read()
+            # 单目标
+            content = content.split("\n")[0].split(" ")
+        target_str_bbox = content[0:4]
+        target_str_class = content[4:]
+
+        target_bbox = torch.tensor(
+            [float(i) for i in target_str_bbox], dtype=torch.float64
+        )
+
+        target_class = torch.tensor(
+            [float(i) for i in target_str_class], dtype=torch.float64
+        )
+        image = trans(
+            Image.open(os.path.join(images_dir, file_name + ".png")).convert("RGB")
+        )
+
+        return image, target_bbox, target_class
+```
+
+
+### 15.7 开始训练
+
+如果分类损失使用 `CrossEntropyLoss`，它需要的类别标签通常不是 one-hot，而是类别下标。所以还可以进一步转成：
+
+```python
+class_target = class_target.argmax().long()
+```
+
+一个更接近标准 PyTorch 训练方式的结构可以写成：
+
+```python
+from torch.utils.data import Dataset
+
+
+class MyDataset(Dataset):
     def __init__(self):
-        super().__init__()
-        self.backbone = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2),
-            # 第二层卷积：通道从 32 -> 64
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2),
-            # 第三层卷积：通道从 64 -> 128
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2),
-            # 第四层卷积：通道从 128 -> 256
-            nn.Conv2d(128, 256, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2),
-        )
-        self.share = nn.Sequential(
-            nn.Flatten(),
-            # 假设图片都是 64*64，所以最终会变成 4*4 大小
-            nn.Linear(256 * 4 * 4, 1024),
-            nn.ReLU(),
+        self.files = [f for f in os.listdir(my_annotation_dir) if f.endswith(".txt")]
+        self.transform = transforms.ToTensor()
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, index):
+        name = self.files[index]
+        file_name = os.path.splitext(name)[0]
+
+        with open(os.path.join(my_annotation_dir, name), "r", encoding="utf-8") as f:
+            values = f.read().strip().split(" ")
+
+        values = [float(v) for v in values]
+        target = torch.tensor(values, dtype=torch.float32)
+
+        bbox_target = target[:4]
+        class_target = target[4:].argmax().long()
+
+        image = self.transform(
+            Image.open(os.path.join(images_dir, file_name + ".png")).convert("RGB")
         )
 
-    def forward(self, x):
-        x = self.backbone(x)
-        x = self.share(x)
-        return x
+        return image, bbox_target, class_target
 ```
 
-这个写法的优点是结构简单，适合用来理解“卷积提特征、池化压缩尺寸、全连接层整理特征”的基本过程。
-
-但它也有一个明显问题：这个 Backbone 是从零开始训练的。对于只有几十张或者几百张图片的小数据集来说，模型很难学到足够稳定的图像特征。它可能还没真正理解“坦克长什么样”，就已经把训练集里的几张截图背下来了。
-
-所以如果想让效果更好，一个常见做法是：**不要完全从零设计 Backbone，而是使用已有的成熟模型结构作为特征提取器**。
-
-例如可以使用 VGG、ResNet、MobileNet 这类已经在大规模图像数据上训练过的网络。它们前面的卷积层已经学到了一些通用视觉特征，比如：
-
-- 边缘和角点。
-- 颜色和纹理。
-- 局部形状。
-- 更高层的物体部件特征。
-
-这类通用特征不只对 ImageNet 分类任务有用，对自己的小型目标检测任务也有帮助。我们可以把这些成熟网络当作 Backbone，后面再接自己的 `class_head` 和 `bbox_head`。
-
-用 VGG16 做 Backbone 的简化示例如下：
+这样就可以交给 PyTorch 的 `DataLoader` 批量读取：
 
 ```python
-import torch.nn as nn
-from torchvision.models import VGG16_Weights, vgg16
+from torch.utils.data import DataLoader
 
 
-class MyYoloWithVGG(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-        # 加载在 ImageNet 上预训练过的 VGG16。
-        vgg = vgg16(weights=VGG16_Weights.DEFAULT)
-
-        # VGG 的 features 部分主要由卷积层和池化层组成，适合作为 Backbone。
-        self.backbone = vgg.features
-
-        # 用自适应池化把不同输入尺寸的特征图统一压缩到固定大小。
-        self.pool = nn.AdaptiveAvgPool2d((7, 7))
-
-        # VGG16 features 的输出通道数是 512。
-        self.share = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(512 * 7 * 7, 1024),
-            nn.ReLU(),
-        )
-
-    def forward(self, x):
-        x = self.backbone(x)
-        x = self.pool(x)
-        x = self.share(x)
-        return x
+dataset = MyDataset()
+dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
 ```
 
-这段代码里最关键的是：
+训练循环就可以写成：
 
 ```python
-self.backbone = vgg.features
+for images, bbox_targets, class_targets in dataloader:
+    pred_bbox, pred_class_logits = model(images)
+
+    bbox_loss = mse_loss(pred_bbox, bbox_targets)
+    class_loss = cross_entropy_loss(pred_class_logits, class_targets)
+    loss = bbox_loss + class_loss
+
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
 ```
 
-因为 VGG16 可以分成两大部分：
+到这里，一个最小版的目标检测训练闭环就完整了：
 
-- `features`：前面的卷积网络，负责提取图像特征。
-- `classifier`：后面的分类器，负责 ImageNet 的 1000 类分类。
+```text
+图片 + XML 标注
+      ↓
+custom.py 转换标签
+      ↓
+Dataset / DataLoader 读取图片和标签
+      ↓
+Backbone 提取特征
+      ↓
+bbox_head 预测位置，class_head 预测类别
+      ↓
+坐标损失 + 分类损失
+      ↓
+反向传播更新模型
+```
 
-我们做目标检测时，并不需要 VGG 原本的 1000 类分类器，所以只保留 `features` 作为 Backbone，然后把后面的预测头换成自己的结构。
-
-可以把这理解成两种训练方式：
-
-| 方式 | 含义 | 适合场景 |
-| --- | --- | --- |
-| 从零训练 Backbone | 所有特征都让模型自己学 | 数据量比较大，算力充足 |
-| 使用预训练 Backbone | 复用成熟模型学过的视觉特征 | 数据量较小，希望更快得到可用效果 |
-
-
-
-### 15.5 DataLoader 实现
-
-
+> 标签格式决定模型输出，模型输出决定损失函数，损失函数再反过来指导模型学习。
 
 ---
 
