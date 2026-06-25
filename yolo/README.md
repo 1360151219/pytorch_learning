@@ -1,8 +1,19 @@
-# 用 YOLO 训练自己的目标检测模型：从标注图片到识别“三角洲行动”目标
+# 目标检测实战路线：用 YOLO 跑通训练，再手写一个简化版模型
 
 我用一小批自己标注的游戏截图，训练了一个可以识别“三角洲行动”目标的 YOLO 检测模型。
 
-这件事听起来像是“深度学习工程师专属任务”，但真正跑通以后会发现，目标检测的完整流程其实非常清晰：
+这件事听起来像是“深度学习工程师专属任务”，但真正跑通以后会发现，目标检测的完整流程其实非常清晰。
+
+这篇文章分成两条路线：
+
+| 阶段 | 目标 | 产物 |
+| --- | --- | --- |
+| 1-14 节 | 使用 `ultralytics` 跑通完整 YOLO 训练流程 | `best.pt`、`results.csv`、预测结果图 |
+| 15 节 | 用 PyTorch 手写一个简化版单目标检测器 | `my_model.pth` |
+
+前半部分先解决“怎么把自己的数据喂给 YOLO”，后半部分再拆开看“目标检测模型内部到底需要哪些模块”。如果你只是想先训练一个可用模型，读到第 14 节就能跑完整流程；如果你还想理解原理，再继续读第 15 节。
+
+工具链实战部分可以概括为：
 
 1. 准备图片。
 2. 用工具把目标框出来。
@@ -52,7 +63,7 @@ YOLO 的全称是 **You Only Look Once**，直译过来就是“只看一眼”�
 
 本文使用 `ultralytics` 库来完成 YOLO 模型的加载、训练和推理。你不需要从零实现完整的检测网络，只需要先理解数据格式和训练流程，就可以把一个自定义检测任务跑起来。
 
-本文示例使用本地的 `yolo26n.pt` 模型文件。如果你的环境中没有这个权重文件，也可以换成当前 `ultralytics` 支持的其他 nano 级模型权重。`n` 通常代表 nano，也就是体积更小、速度更快的版本，适合入门实验。
+本文示例使用 `yolo26n.pt` 权重文件。首次运行时 `ultralytics` 会自动从 GitHub Releases 下载并缓存到本地，之后直接使用缓存，无需手动下载。你也可以换成当前 `ultralytics` 支持的其他 nano 级模型权重。`n` 通常代表 nano，也就是体积更小、速度更快的版本，适合入门实验。
 
 ---
 
@@ -84,7 +95,7 @@ pip install xmltodict pyyaml
 ```python
 from ultralytics import YOLO
 
-# 加载模型。第一次运行时，如果本地没有对应权重，可能会自动下载。
+# 加载模型。这里使用仓库中的本地权重文件。
 model = YOLO("yolo26n.pt")
 
 # 对一张网络图片进行目标检测，并保存检测结果。
@@ -149,6 +160,8 @@ model.predict(
 它们的共同点是：都要记录每个目标的类别和矩形框位置。
 
 不同点在于：矩形框的表示方法不一样。
+
+本文后面主要会用到 VOC 和 YOLO：LabelImg 先导出 VOC XML，再转换成 YOLO TXT。COCO 在这里只作为对照，知道它也是一种常见格式即可。
 
 ### 6.1 COCO 格式
 
@@ -303,6 +316,13 @@ LabelImg 左侧会有一个格式按钮，常见状态是：
 
 如果你已经标注成了 VOC 格式，也没关系，后面可以用脚本转换成 YOLO 格式。
 
+可以按这个规则决定下一步：
+
+| LabelImg 导出格式 | 下一步 |
+| --- | --- |
+| `YOLO` | 可以跳过第 8 节，直接检查 `labels/*.txt` 和 `data.yaml` |
+| `PascalVOC` | 继续看第 8 节，把 `annotation/*.xml` 转成 `labels/*.txt` |
+
 ### 第三步：开始画框
 
 常用快捷键：
@@ -323,7 +343,7 @@ LabelImg 左侧会有一个格式按钮，常见状态是：
 
 ---
 
-## 8. 从 VOC 转成 YOLO 格式
+## 8. 从 VOC 转成 Ultralytics YOLO 格式
 
 我一开始标注出来的是 VOC 的 `.xml` 文件，所以需要把它转换成 YOLO 的 `.txt` 文件。
 
@@ -414,6 +434,24 @@ def convert_voc_to_yolo(annotations_dir, labels_dir, classes):
             f.write("\n".join(yolo_lines))
 ```
 
+调用时可以这样写：
+
+```python
+classes = ["tank", "coffee_bean", "info_device", "quantum_memory"]
+
+convert_voc_to_yolo(
+    annotations_dir="custom_dataset/annotation",
+    labels_dir="custom_dataset/labels",
+    classes=classes,
+)
+```
+
+转换完成后，可以先随机打开一个 `custom_dataset/labels/*.txt` 检查格式。给 Ultralytics YOLO 训练用的 TXT 必须是：
+
+```text
+class_id x_center y_center width height
+```
+
 假设类别如下：
 
 ```python
@@ -428,6 +466,15 @@ classes = ["tank", "coffee_bean", "info_device", "quantum_memory"]
 - `quantum_memory` 的类别 ID 是 `3`
 
 这里有一个很重要的细节：**类别顺序必须和训练配置里的 `names` 保持一致**。
+
+到这里，文章里会出现三个容易混淆的目录，可以先记住它们的分工：
+
+| 目录 | 来源 | 标签格式 | 给谁用 |
+| --- | --- | --- | --- |
+| `custom_dataset/annotation` | LabelImg 导出的 VOC 标注 | XML，里面是 `xmin, ymin, xmax, ymax` | 转换脚本和第 15 节的 `get_dataset()` |
+| `custom_dataset/labels` | 第 8 节转换得到 | `class_id x_center y_center width height` | Ultralytics YOLO 训练 |
+
+`labels/*.txt` 和 `my_annotation/*.txt` 都是 TXT，但格式不同，不能直接混用。
 
 ---
 
@@ -496,6 +543,8 @@ names:
 
 训练代码可以很短：
 
+下面的相对路径默认你在 `yolo/` 目录下运行脚本。如果你在项目根目录运行，就要把路径改成 `yolo/custom_dataset/data.yaml` 这类形式。
+
 ```python
 from ultralytics import YOLO
 
@@ -510,6 +559,8 @@ results = model.train(
     name="custom_train",
 )
 ```
+
+这是一个便于入门的最小写法。仓库里的 `main.py` 会把输出目录拼成绝对路径，并且示例训练结果可能来自不同的 `imgsz` 设置，所以看 `results.csv` 时重点理解指标含义，不必强行和这段最小代码逐列对齐。
 
 这些参数分别表示：
 
@@ -582,15 +633,17 @@ train_results/custom_train/weights/best.pt
 
 训练结束后，`results.csv` 会记录每个 epoch 的表现。
 
-下面是一个训练前 5 轮的示例：
+完整的 `results.csv` 列会比较多，第一次看可以先摘出这些关键列：
 
-| epoch | time | train/box_loss | train/cls_loss | train/dfl_loss | metrics/precision(B) | metrics/recall(B) | metrics/mAP50(B) | metrics/mAP50-95(B) | val/box_loss | val/cls_loss | val/dfl_loss | lr/pg0 | lr/pg1 | lr/pg2 |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | 13.3459 | 1.32585 | 11.2315 | 0.02093 | 0.02818 | 0.66667 | 0.03989 | 0.01135 | 1.12445 | 16.8487 | 0.02813 | 5e-05 | 5e-05 | 5e-05 |
-| 2 | 25.5511 | 1.41282 | 13.9945 | 0.03049 | 0.03443 | 0.67708 | 0.19294 | 0.05718 | 0.86359 | 16.2138 | 0.02145 | 0.000111386 | 0.000111386 | 0.000111386 |
-| 3 | 37.1597 | 1.18026 | 13.2446 | 0.02545 | 0.02972 | 0.69792 | 0.09421 | 0.03176 | 0.79439 | 16.0474 | 0.02013 | 0.000171535 | 0.000171535 | 0.000171535 |
-| 4 | 49.3252 | 0.94532 | 11.0331 | 0.01499 | 0.01483 | 0.71875 | 0.08517 | 0.03963 | 0.79102 | 15.9954 | 0.01846 | 0.000230446 | 0.000230446 | 0.000230446 |
-| 5 | 61.7327 | 0.9305 | 10.5206 | 0.0189 | 0.00965 | 0.47917 | 0.08202 | 0.04612 | 0.77071 | 15.8946 | 0.01763 | 0.00028812 | 0.00028812 | 0.00028812 |
+| epoch | train/box_loss | train/cls_loss | metrics/precision(B) | metrics/recall(B) | metrics/mAP50(B) | metrics/mAP50-95(B) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | 1.32585 | 11.2315 | 0.02818 | 0.66667 | 0.03989 | 0.01135 |
+| 2 | 1.41282 | 13.9945 | 0.03443 | 0.67708 | 0.19294 | 0.05718 |
+| 3 | 1.18026 | 13.2446 | 0.02972 | 0.69792 | 0.09421 | 0.03176 |
+| 4 | 0.94532 | 11.0331 | 0.01483 | 0.71875 | 0.08517 | 0.03963 |
+| 5 | 0.93050 | 10.5206 | 0.00965 | 0.47917 | 0.08202 | 0.04612 |
+
+真实文件里还会有 `time`、`train/dfl_loss`、`val/*_loss`、学习率等列。它们也有价值，但入门阶段先把 loss 和 metrics 这两类看明白就够了。
 
 第一次看到这个表，可能会有点密集。其实可以先抓住两个方向：
 
@@ -669,6 +722,7 @@ model = YOLO("train_results/custom_train/weights/best.pt")
 
 # 如果你已经拆分了 train/val，可以把这里改成 custom_dataset/images/val。
 # 如果你像本文演示一样暂时使用扁平目录，就保持 custom_dataset/images。
+# 关键是确保这个目录下面真的有图片文件。
 test_image_dir = "custom_dataset/images"
 image_paths = [
     os.path.join(test_image_dir, filename)
@@ -737,11 +791,26 @@ model.predict(
 
 前面我们使用的是成熟的 YOLO 工具链。它帮我们封装了数据读取、网络结构、损失函数、训练循环、预测后处理等大量细节。
 
+从这一节开始，路线切换到 `custom.py`：不再调用 Ultralytics 的 `YOLO(...).train()`，而是用 PyTorch 手写一个学习版检测器。
+
+这两个训练结果也不一样：
+
+| 路线 | 训练对象 | 产物 |
+| --- | --- | --- |
+| 1-14 节 | Ultralytics YOLO | `best.pt` |
+| 15 节 | 手写版 `MyYolo` | `my_model.pth` |
+
 如果想自己实现一个目标检测模型，不建议一上来就复刻完整 YOLO。更适合初学者的方式是先做一个**简化版单目标检测器**：
 
 > 输入一张图片，模型只预测一个目标框，以及这个目标属于哪个类别。
 
-这个版本不追求工程完整性，而是帮助我们把目标检测最核心的链路跑通。
+这个版本不追求工程完整性，也不是完整 YOLO。它有三个刻意的简化：
+
+1. 一张图只训练一个目标。
+2. 如果一个 TXT 里有多行标签，只读取第一行。
+3. 只跑训练闭环，暂时不做完整推理后处理。
+
+它的目标是帮助我们把目标检测最核心的链路跑通。
 
 这一节可以按下面的路线理解：
 
@@ -755,14 +824,14 @@ model.predict(
 2. 标签要整理成什么格式？
 3. 输出和标签之间怎么计算损失？
 
-只要这三件事对齐，后面的模型结构和训练代码才有意义。
+只要这三件事对齐，后面的数据读取、模型结构和训练代码才有意义。
 
 ### 15.1 模型的输出格式
 
-模型输出可以设计成：
+这个 demo 先把问题限制得很小：一张图片只训练一个目标。即使 `get_dataset()` 可以把一张图片中的多个目标写成多行，后面的 `MyDataset` 也只读取第一行：
 
 ```text
-[center_x, center_y, width, height, class_score_1, class_score_2, class_score_3, class_score_4]
+[center_x, center_y, width, height, class_one_hot_1, class_one_hot_2, class_one_hot_3, class_one_hot_4]
 ```
 
 前 4 个数字表示目标框（经过归一化）：
@@ -772,7 +841,10 @@ model.predict(
 - `width`：目标框宽度。
 - `height`：目标框高度。
 
-后 4 个数字表示类别分数。
+后 4 个数字表示类别 one-hot 标签。比如 `1 0 0 0` 表示第 0 类，`0 1 0 0` 表示第 1 类。
+
+| 文件 | 一行的格式 | 用途 |
+| `my_annotation/*.txt` | `x_center y_center width height class_one_hot...` | 给手写版 `MyYolo` 训练 |
 
 这个简化版检测器把目标检测拆成两个最基本的问题：
 
@@ -781,9 +853,9 @@ model.predict(
 分类：框里的东西是什么？
 ```
 
-### 15.2 数据转换：训练数据格式化
+### 15.2 数据转换：VOC XML -> 单目标训练标签
 
-既然模型输出格式我们已经规定好了，接下来就需要讲训练数据进行格式化。
+既然模型输出格式已经规定好了，接下来就需要将训练数据整理成同样的结构。
 
 在 LabelImg 中标注图片时，我使用的是 VOC 格式。VOC 的 XML 文件里，目标框通常记录为：
 
@@ -806,6 +878,8 @@ center_x, center_y, width, height
 ```text
 读取 XML -> 取出图片宽高和目标框 -> 坐标归一化 -> 拼接 one-hot 类别并保存 TXT
 ```
+
+下面代码里的 `obj` 来自 XML 中的一个 `<object>`，`file_width` 和 `file_height` 来自 XML 里的图片尺寸：
 
 ```python
 classes = ["tank", "coffee_bean", "info_device", "quantum_memory"]
@@ -830,15 +904,121 @@ one_hot_str = " ".join(str(h) for h in one_hot)
 line = f"{x_center:.6f} {y_center:.6f} {width:.6f} {height:.6f} {one_hot_str}"
 ```
 
-转换后，一行标签代表一个目标：
+转换后，一行 TXT 标签代表一个目标：
 
 ```text
 0.500000 0.500000 0.200000 0.300000 1 0 0 0
 ```
 
-如果一张图片里有多个目标，转换后的 TXT 文件里就会有多行。
+前 4 个数字是边框，后 4 个数字是 one-hot 类别。这里先保存 one-hot，是因为它直观地表达了“哪个类别为 1”。等真正进入训练时，`MyDataset` 还会把它转换成类别下标，方便配合 `CrossEntropyLoss`。
 
-### 15.3 网络结构：Backbone + Shared + Head
+如果一张图片里有多个目标，转换后的 TXT 文件里就会有多行。不过当前 demo 为了简化训练，只读取第一行作为单目标样本。
+
+### 15.3 Dataset：把图片和标签读成张量
+
+标签文件准备好以后，下一步就是让 PyTorch 能够一批一批地读取数据。
+
+`custom.py` 里的 `MyDataset` 继承自 `Dataset`，它负责把磁盘上的一组文件整理成：
+
+```text
+image, target_bbox, target_class
+```
+
+也就是：
+
+```text
+图片张量, 真实框坐标, 真实类别下标
+```
+
+先把输入输出关系看成这样：
+
+```text
+custom_dataset/images/value_tank (1).png
+custom_dataset/my_annotation/value_tank (1).txt
+        ↓
+MyDataset.__getitem__()
+        ↓
+image [3, 224, 224], target_bbox [4], target_class []
+```
+
+当前 demo 有两个文件约定：
+
+1. 图片和标签文件名要同名，只是扩展名不同。
+2. `custom.py` 里读取图片时写死了 `.png`，如果你的图片是 `.jpg`，需要同步修改这行读取逻辑。
+
+核心代码如下：
+
+```python
+class MyDataset(Dataset):
+    def __init__(self) -> None:
+        self.files = os.listdir(my_annotation_dir)
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, index):
+        trans = transforms.Compose(
+            [
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+            ]
+        )
+        name = self.files[index]
+        file_name = os.path.splitext(name)[0]
+
+        with open(
+            os.path.join(my_annotation_dir, file_name + ".txt"), "r", encoding="utf-8"
+        ) as f:
+            content = f.read()
+            content = content.split("\n")[0].split(" ")
+
+        target_str_bbox = content[0:4]
+        target_str_class = content[4:]
+
+        target_bbox = torch.tensor(
+            [float(i) for i in target_str_bbox], dtype=torch.float32
+        )
+        target_class = torch.tensor(target_str_class.index("1"), dtype=torch.long)
+
+        image = trans(
+            Image.open(os.path.join(images_dir, file_name + ".png")).convert("RGB")
+        )
+
+        return image, target_bbox, target_class
+```
+
+这里有两个细节很关键：
+
+1. 图片会先 `Resize((224, 224))`，再通过 `ToTensor()` 转成 `[C, H, W]` 格式的张量。
+2. TXT 里保存的是 one-hot 类别，但训练时会用 `target_str_class.index("1")` 转成类别下标。
+
+第二点是因为 `CrossEntropyLoss` 需要的目标不是 `[1, 0, 0, 0]` 这种 one-hot，而是 `0`、`1`、`2`、`3` 这样的类别编号。
+
+还有一个和预训练 Backbone 有关的细节：当前 `custom.py` 为了保持 demo 简单，只用了 `Resize + ToTensor`。如果希望更充分地复用 `VGG16_Weights.DEFAULT` 的预训练特征，通常还应该加上 ImageNet 的归一化：
+
+```python
+transforms.Normalize(
+    mean=[0.485, 0.456, 0.406],
+    std=[0.229, 0.224, 0.225],
+)
+```
+
+这一步不是目标检测特有的，而是使用 TorchVision 预训练图像模型时常见的输入预处理要求。
+
+最后再把 `Dataset` 交给 PyTorch 的 `DataLoader`：
+
+```python
+dataloader = DataLoader(MyDataset(), batch_size=4, shuffle=True)
+```
+
+这样训练循环每次拿到的就不再是一张图片，而是一个 batch：
+
+```python
+for image, target_bbox, target_class in dataloader:
+    ...
+```
+
+### 15.4 网络结构：Backbone + Shared + Head
 
 有了标签格式以后，再来看网络结构会更清楚。
 
@@ -864,9 +1044,9 @@ line = f"{x_center:.6f} {y_center:.6f} {width:.6f} {height:.6f} {one_hot_str}"
 - `Backbone`：提取图像特征。
 - `Pool + Shared`：把特征图压缩并整理成固定长度的特征向量。
 - `bbox_head`：输出 4 个坐标值。
-- `class_head`：输出类别分数。
+- `class_head`：输出分类 logits。
 
-#### 15.3.1 Backbone：提取图像特征
+#### 15.4.1 Backbone：从手写卷积到预训练 VGG
 
 Backbone 可以理解为模型的“眼睛”：它不直接输出最终类别和边界框，而是先把原始图片转换成更抽象的特征。
 
@@ -899,7 +1079,7 @@ from torchvision.models import VGG16_Weights, vgg16
 
 
 class MyYolo(nn.Module):
-    def __init__(self):
+    def __init__(self, classes_length):
         super().__init__()
 
         self.backbone = vgg16(weights=VGG16_Weights.DEFAULT).features
@@ -909,13 +1089,29 @@ class MyYolo(nn.Module):
             nn.Linear(512 * 10 * 10, 1024),
             nn.ReLU(),
         )
+        self.bbox_head = nn.Linear(1024, 4)
+        self.class_head = nn.Linear(1024, classes_length)
 
     def forward(self, x):
         x = self.backbone(x)
         x = self.pool(x)
         x = self.share(x)
-        return x
+        bbox_logit = self.bbox_head(x)
+        class_logit = self.class_head(x)
+        return bbox_logit, class_logit
 ```
+
+这里的张量形状可以这样理解：
+
+```text
+image                 -> [batch_size, 3, 224, 224]
+VGG16 features        -> [batch_size, 512, H, W]
+AdaptiveAvgPool2d     -> [batch_size, 512, 10, 10]
+Flatten               -> [batch_size, 512 * 10 * 10]
+Linear(51200, 1024)   -> [batch_size, 1024]
+```
+
+所以 `nn.Linear(512 * 10 * 10, 1024)` 里的 `512` 来自 VGG 特征通道数，`10 * 10` 来自 `AdaptiveAvgPool2d((10, 10))` 固定后的空间尺寸。
 
 这里最关键的是：
 
@@ -937,13 +1133,15 @@ VGG16 可以分成两部分：
 | 从零训练 Backbone | 所有特征都让模型自己学 | 数据量比较大，算力充足 |
 | 使用预训练 Backbone | 复用成熟模型学过的视觉特征 | 数据量较小，希望更快得到可用效果 |
 
-#### 15.3.2 Head：分别预测坐标和类别
+对于很小的数据集，还可以先冻结 Backbone，只训练后面的 `share`、`bbox_head` 和 `class_head`，等模型能稳定下降后再考虑解冻微调。
+
+#### 15.4.2 Head：分别预测坐标和类别
 
 Backbone 输出的是图像特征，还不是最终结果。我们还需要两个预测头：
 
 ```python
 self.bbox_head = nn.Linear(1024, 4)
-self.class_head = nn.Linear(1024, len(classes))
+self.class_head = nn.Linear(1024, classes_length)
 ```
 
 前向传播时可以这样写：
@@ -954,40 +1152,51 @@ def forward(self, x):
     x = self.pool(x)
     x = self.share(x)
 
-    bbox = self.bbox_head(x)
-    cls_logits = self.class_head(x)
+    bbox_logit = self.bbox_head(x)
+    class_logit = self.class_head(x)
 
-    return bbox, cls_logits
+    return bbox_logit, class_logit
 ```
 
 这样模型的输出就和前面设计的标签格式对应起来了：
 
 ```text
-bbox        -> center_x, center_y, width, height
-cls_logits  -> class_score_1, class_score_2, class_score_3, class_score_4
+bbox_logit   -> center_x, center_y, width, height
+class_logit  -> class_1_logit, class_2_logit, class_3_logit, class_4_logit
 ```
 
 ### 15.5 损失函数：坐标损失 + 分类损失
 
-模型输出分成两部分，损失函数也可以分成两部分。
+模型输出分成两部分，损失函数也可以分成两部分。先把四个关键张量对齐：
+
+| 张量 | 形状 | 含义 | 交给哪个 loss |
+| --- | --- | --- | --- |
+| `predict_bbox` | `[batch_size, 4]` | 模型预测的框坐标 | `MSELoss` |
+| `target_bbox` | `[batch_size, 4]` | 标签里的真实框坐标 | `MSELoss` |
+| `predict_class` | `[batch_size, classes_length]` | 模型输出的分类 logits | `CrossEntropyLoss` |
+| `target_class` | `[batch_size]` | 真实类别下标，`dtype=torch.long` | `CrossEntropyLoss` |
 
 #### 15.5.1 坐标损失
 
-坐标预测本质上是回归问题。
+坐标预测本质上是回归问题。可以使用 `MSELoss`：
 
-如果只是做一个简化版本，可以先用 MSE 来理解：
-
-```text
-预测框坐标和真实框坐标越接近，bbox_loss 越小。
+```python
+bbox_loss_fn = nn.MSELoss()
+bbox_loss = bbox_loss_fn(predict_bbox, target_bbox)
 ```
 
-真实目标检测模型通常会使用更复杂的框回归损失，因为它还要考虑框的重叠面积、中心点距离、宽高比例等因素。
+这里 `predict_bbox` 和 `target_bbox` 的形状都是 `[batch_size, 4]`。预测框越接近真实框，`bbox_loss` 就越小。
 
-但在学习阶段，先用 MSE 跑通流程是可以的。
+真实目标检测模型通常会使用更复杂的框回归损失，因为它还要考虑框的重叠面积、中心点距离、宽高比例等因素。这里先用 MSE，是为了把训练链路跑通。
 
 #### 15.5.2 分类损失
 
-类别预测本质上是分类问题。
+类别预测本质上是分类问题。demo 里使用 `CrossEntropyLoss`：
+
+```python
+class_loss_fn = nn.CrossEntropyLoss()
+class_loss = class_loss_fn(predict_class, target_class)
+```
 
 模型直接输出的通常不是概率，而是 logits。例如：
 
@@ -1001,11 +1210,22 @@ cls_logits  -> class_score_1, class_score_2, class_score_3, class_score_4
 [0.74, 0.01, 0.15, 0.10]
 ```
 
-也就是说，模型认为第一个类别的概率最高。
+也就是说，模型认为第一个类别的概率最高。下面这张图可以帮助理解 softmax 和交叉熵之间的关系：模型先输出 logits，再通过损失函数惩罚错误类别、鼓励正确类别。
 
 ![CrossEntropyLoss](image-1.png)
 
-分类任务中常见的损失函数是 `CrossEntropyLoss`。它会惩罚错误分类，并鼓励模型把正确类别的概率推高。
+使用它时要特别注意输入格式：
+
+```text
+predict_class -> [batch_size, classes_length]，模型输出的 logits
+target_class  -> [batch_size]，真实类别下标，dtype 是 torch.long
+```
+
+这也是为什么 `MyDataset` 里没有直接返回 one-hot，而是写成：
+
+```python
+target_class = torch.tensor(target_str_class.index("1"), dtype=torch.long)
+```
 
 所以这个简化模型的总损失就是：
 
@@ -1016,161 +1236,101 @@ loss = bbox_loss + class_loss
 也可以写得更明确一点：
 
 ```python
-bbox_loss = mse_loss(pred_bbox, target_bbox)
-class_loss = cross_entropy_loss(pred_class_logits, target_class)
+bbox_loss = bbox_loss_fn(predict_bbox, target_bbox)
+class_loss = class_loss_fn(predict_class, target_class)
 loss = bbox_loss + class_loss
 ```
 
-### 15.6 DataLoader
+这里直接把两个 loss 相加，是一种简化写法。真实训练中，坐标损失和分类损失的量级可能不同，经常需要调权重，或者把坐标损失换成更适合框回归的 IoU 系列损失。
 
-完成标签转换后，就需要把磁盘上的图片和 TXT 标签读取出来，变成模型可以训练的数据，这就需要用到 `DataLoader` 了，它的职责包括：
+### 15.6 训练手写版 MyYolo
+
+前面的数据、模型和损失函数都准备好以后，训练循环就很直接了。
+
+第一次运行前要先确认 `custom_dataset/my_annotation` 已经存在，并且里面有和图片同名的 `.txt` 文件。因为 `MyDataset()` 初始化时会立刻读取这个目录，如果目录还没生成，训练会在创建 `DataLoader` 之前就失败。
+
+`main()` 里先创建模型、优化器、损失函数和 `DataLoader`：
+
+```python
+model = MyYolo(len(classes))
+optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+
+class_loss_fn = nn.CrossEntropyLoss()
+bbox_loss_fn = nn.MSELoss()
+dataloader = DataLoader(MyDataset(), batch_size=4, shuffle=True)
+```
+
+如果还没有生成 `my_annotation`，先运行一次 `get_dataset()`。当前代码里这一行被注释掉了，第一次准备标签时可以临时打开，生成完再注释回去：
+
+```python
+get_dataset()
+```
+
+真正训练时，每个 batch 都会经历下面几步：
+
+```python
+for epoch in range(20):
+    total_loss = 0
+    for image, target_bbox, target_class in dataloader:
+        predict_bbox, predict_class = model(image)
+
+        bbox_loss = bbox_loss_fn(predict_bbox, target_bbox)
+        class_loss = class_loss_fn(predict_class, target_class)
+
+        loss = bbox_loss + class_loss
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item()
+    print(f"epoch {epoch}, loss: {total_loss:.4f}")
+```
+
+这段代码就是 PyTorch 训练最标准的节奏：
 
 ```text
-遍历 my_annotation 目录 -> 根据 txt 文件名找到同名图片 -> 读取图片 -> 读取 bbox 和 class -> 返回给训练循环
+前向传播 -> 计算损失 -> 清空梯度 -> 反向传播 -> 更新参数
 ```
 
-核心代码如下：
+训练结束后，模型参数会保存到：
 
 ```python
-class MyDataLoader:
-     def __getitem__(self, index):
-        trans = transforms.ToTensor()
-        name = self.files[index]
-        file_name = os.path.splitext(name)[0]
-
-        with open(
-            os.path.join(my_annotation_dir, file_name + ".txt"), "r", encoding="utf-8"
-        ) as f:
-            content = f.read()
-            # 单目标
-            content = content.split("\n")[0].split(" ")
-        target_str_bbox = content[0:4]
-        target_str_class = content[4:]
-
-        target_bbox = torch.tensor(
-            [float(i) for i in target_str_bbox], dtype=torch.float64
-        )
-
-        target_class = torch.tensor(
-            [float(i) for i in target_str_class], dtype=torch.float64
-        )
-        image = trans(
-            Image.open(os.path.join(images_dir, file_name + ".png")).convert("RGB")
-        )
-
-        return image, target_bbox, target_class
+torch.save(model.state_dict(), "my_model.pth")
 ```
 
+### 15.7 这个 demo 和完整 YOLO 的差距
 
-### 15.7 开始训练
-
-如果分类损失使用 `CrossEntropyLoss`，它需要的类别标签通常不是 one-hot，而是类别下标。所以还可以进一步转成：
-
-```python
-class_target = class_target.argmax().long()
-```
-
-一个更接近标准 PyTorch 训练方式的结构可以写成：
-
-```python
-from torch.utils.data import Dataset
-
-
-class MyDataset(Dataset):
-    def __init__(self):
-        self.files = [f for f in os.listdir(my_annotation_dir) if f.endswith(".txt")]
-        self.transform = transforms.ToTensor()
-
-    def __len__(self):
-        return len(self.files)
-
-    def __getitem__(self, index):
-        name = self.files[index]
-        file_name = os.path.splitext(name)[0]
-
-        with open(os.path.join(my_annotation_dir, name), "r", encoding="utf-8") as f:
-            values = f.read().strip().split(" ")
-
-        values = [float(v) for v in values]
-        target = torch.tensor(values, dtype=torch.float32)
-
-        bbox_target = target[:4]
-        class_target = target[4:].argmax().long()
-
-        image = self.transform(
-            Image.open(os.path.join(images_dir, file_name + ".png")).convert("RGB")
-        )
-
-        return image, bbox_target, class_target
-```
-
-这样就可以交给 PyTorch 的 `DataLoader` 批量读取：
-
-```python
-from torch.utils.data import DataLoader
-
-
-dataset = MyDataset()
-dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
-```
-
-训练循环就可以写成：
-
-```python
-for images, bbox_targets, class_targets in dataloader:
-    pred_bbox, pred_class_logits = model(images)
-
-    bbox_loss = mse_loss(pred_bbox, bbox_targets)
-    class_loss = cross_entropy_loss(pred_class_logits, class_targets)
-    loss = bbox_loss + class_loss
-
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
-```
-
-到这里，一个最小版的目标检测训练闭环就完整了：
+到这里，一个最小版目标检测训练闭环就完整了：
 
 ```text
 图片 + XML 标注
-      ↓
-custom.py 转换标签
-      ↓
-Dataset / DataLoader 读取图片和标签
-      ↓
-Backbone 提取特征
-      ↓
-bbox_head 预测位置，class_head 预测类别
-      ↓
-坐标损失 + 分类损失
-      ↓
+    ↓
+get_dataset() 生成 my_annotation/*.txt
+    ↓
+MyDataset 读取图片、边框和类别
+    ↓
+DataLoader 组装 batch
+    ↓
+MyYolo 输出 predict_bbox 和 predict_class
+    ↓
+MSELoss + CrossEntropyLoss
+    ↓
 反向传播更新模型
+    ↓
+保存 my_model.pth
 ```
 
 > 标签格式决定模型输出，模型输出决定损失函数，损失函数再反过来指导模型学习。
 
+不过这个 demo 仍然只是学习版实现。下面这些机制现在不用全部掌握，只要知道它们是完整检测系统为了支持多目标、更稳定训练和更可靠推理而加入的能力：
+
+1. 这里只训练单目标，`MyDataset` 只读取 TXT 的第一行。
+2. 没有完整检测模型常见的多尺度特征、检测头设计、框解码/匹配策略和推理后处理机制。
+3. 没有划分训练集和验证集，也没有计算 mAP、Precision、Recall 等检测指标。
+4. 坐标损失只是简单 MSE，没有使用更适合目标框的 IoU 系列损失。
+5. `bbox_head` 的输出没有显式限制到 `[0, 1]`，只是通过归一化标签和 MSE 去学习这个范围。
+6. 推理阶段还需要补充图片预处理、模型加载、类别解析和画框逻辑。
+
+所以它更适合作为“理解目标检测训练链路”的 demo。先把这条链路跑通，再回头看 YOLO 的工程实现，就会更容易理解每一层封装到底在帮我们处理什么。
+
 ---
-
-## 16. 这次实战我最大的收获
-
-目标检测刚开始看起来很复杂，因为它同时涉及图片、标注、坐标、模型、训练指标和推理结果。
-
-但把流程拆开以后，它其实是一条很清晰的链路：
-
-```text
-图片 -> 标注 -> 标签格式 -> data.yaml -> 训练 -> best.pt -> 预测结果
-```
-
-我觉得最重要的不是记住某个参数怎么写，而是理解这几件事：
-
-1. 模型不是凭空“认识”目标的，它是从标注数据里学出来的。
-2. YOLO 标签里的坐标是归一化比例，不是原始像素。
-3. 训练指标不能只看训练集，还要看验证集。
-4. 小数据集可以帮助你跑通流程，但不能代表模型真的足够稳。
-5. 先调通工具链，再深入理解模型原理，是更适合初学者的路径。
-
-如果你也想做自己的目标检测项目，可以先不要追求一步到位。
-
-先准备十几张图片，手动标注，训练一个非常小的模型，让它能在你的图片里框出目标。
-
-当你第一次看到模型把自己关心的东西框出来时，整个目标检测流程就会突然变得具体起来。
