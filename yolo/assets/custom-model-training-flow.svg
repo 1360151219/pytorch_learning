@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="640" viewBox="0 0 1400 640" role="img" aria-labelledby="title desc">
+  <title id="title">手写目标检测模型训练闭环</title>
+  <desc id="desc">展示 MyYolo 从图片 batch 到 Backbone、共享特征、两个预测头、两个 loss，再反向传播更新模型的流程。</desc>
+  <defs>
+    <style>
+      .bg { fill: #f8fafc; }
+      .title { font: 700 28px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+      .label { font: 700 21px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+      .text { font: 600 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #334155; }
+      .code { font: 600 16px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #1e293b; }
+      .hint { font: 600 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #64748b; }
+      .card { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; rx: 16; }
+      .blue { fill: #dbeafe; stroke: #2563eb; stroke-width: 2; }
+      .green { fill: #dcfce7; stroke: #16a34a; stroke-width: 2; }
+      .yellow { fill: #fef9c3; stroke: #ca8a04; stroke-width: 2; }
+      .red { fill: #fee2e2; stroke: #dc2626; stroke-width: 2; }
+      .purple { fill: #ede9fe; stroke: #7c3aed; stroke-width: 2; }
+      .arrow { stroke: #2563eb; stroke-width: 4; fill: none; marker-end: url(#arrowHead); }
+      .back { stroke: #64748b; stroke-width: 3; fill: none; stroke-dasharray: 8 8; marker-end: url(#backHead); }
+      .branch { stroke: #0f766e; stroke-width: 4; fill: none; marker-end: url(#branchHead); }
+    </style>
+    <marker id="arrowHead" markerWidth="14" markerHeight="14" refX="11" refY="7" orient="auto">
+      <path d="M 0 0 L 14 7 L 0 14 z" fill="#2563eb"/>
+    </marker>
+    <marker id="branchHead" markerWidth="14" markerHeight="14" refX="11" refY="7" orient="auto">
+      <path d="M 0 0 L 14 7 L 0 14 z" fill="#0f766e"/>
+    </marker>
+    <marker id="backHead" markerWidth="14" markerHeight="14" refX="11" refY="7" orient="auto">
+      <path d="M 0 0 L 14 7 L 0 14 z" fill="#64748b"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1400" height="640"/>
+  <text class="title" x="64" y="58">手写版 MyYolo：一张图只预测一个框 + 一个类别</text>
+
+  <rect class="card" x="60" y="110" width="180" height="160" rx="16"/>
+  <text class="label" x="92" y="150">image batch</text>
+  <rect class="blue" x="94" y="174" width="112" height="64" rx="10"/>
+  <text class="code" x="93" y="252">[B, 3, 224, 224]</text>
+
+  <path class="arrow" d="M 250 190 L 330 190"/>
+
+  <rect class="card" x="340" y="110" width="210" height="160" rx="16"/>
+  <text class="label" x="394" y="150">Backbone</text>
+  <rect class="blue" x="386" y="176" width="118" height="50" rx="10"/>
+  <text class="text" x="400" y="207">VGG16 features</text>
+  <text class="hint" x="394" y="252">提取图像特征</text>
+
+  <path class="arrow" d="M 560 190 L 640 190"/>
+
+  <rect class="card" x="650" y="110" width="220" height="160" rx="16"/>
+  <text class="label" x="708" y="150">Shared</text>
+  <rect class="yellow" x="690" y="174" width="140" height="44" rx="10"/>
+  <text class="text" x="712" y="202">Pool + Flatten</text>
+  <text class="code" x="706" y="246">[B, 1024]</text>
+
+  <path class="branch" d="M 880 172 C 955 130, 1000 120, 1050 132"/>
+  <path class="branch" d="M 880 226 C 955 270, 1000 296, 1050 306"/>
+
+  <rect class="card" x="1060" y="92" width="260" height="130" rx="16"/>
+  <text class="label" x="1110" y="132">bbox_head</text>
+  <rect class="green" x="1092" y="154" width="196" height="42" rx="10"/>
+  <text class="code" x="1118" y="182">predict_bbox [B, 4]</text>
+
+  <rect class="card" x="1060" y="272" width="260" height="130" rx="16"/>
+  <text class="label" x="1108" y="312">class_head</text>
+  <rect class="purple" x="1092" y="334" width="196" height="42" rx="10"/>
+  <text class="code" x="1100" y="362">predict_class [B, C]</text>
+
+  <rect class="card" x="290" y="420" width="240" height="124" rx="16"/>
+  <text class="label" x="340" y="460">target_bbox</text>
+  <text class="code" x="350" y="500">[B, 4]</text>
+
+  <rect class="card" x="580" y="420" width="240" height="124" rx="16"/>
+  <text class="label" x="626" y="460">target_class</text>
+  <text class="code" x="648" y="500">[B]</text>
+
+  <rect class="green" x="1010" y="438" width="150" height="58" rx="12"/>
+  <text class="text" x="1046" y="474">MSELoss</text>
+  <rect class="purple" x="1010" y="528" width="150" height="58" rx="12"/>
+  <text class="text" x="1020" y="564">CrossEntropy</text>
+
+  <path class="branch" d="M 1190 222 C 1190 335, 1150 410, 1112 438"/>
+  <path class="branch" d="M 530 482 C 720 482, 870 470, 1000 466"/>
+  <path class="branch" d="M 1190 402 C 1190 468, 1150 510, 1112 528"/>
+  <path class="branch" d="M 820 482 C 910 520, 955 544, 1000 556"/>
+
+  <rect class="red" x="1210" y="472" width="140" height="84" rx="14"/>
+  <text class="label" x="1242" y="506">total loss</text>
+  <text class="code" x="1248" y="536">bbox + cls</text>
+  <path class="arrow" d="M 1164 468 L 1200 496"/>
+  <path class="arrow" d="M 1164 556 L 1200 530"/>
+
+  <path class="back" d="M 1278 568 C 1010 620, 600 612, 444 282"/>
+  <text class="hint" x="635" y="604">backward() + optimizer.step()</text>
+</svg>

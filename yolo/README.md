@@ -1,4 +1,4 @@
-# 目标检测实战路线：用 YOLO 跑通训练，再手写一个简化版模型
+# 前端小卒手写目标检测会遇到什么困难？
 
 我用一小批自己标注的游戏截图，训练了一个可以识别“三角洲行动”目标的 YOLO 检测模型。
 
@@ -9,9 +9,19 @@
 | 阶段 | 目标 | 产物 |
 | --- | --- | --- |
 | 1-14 节 | 使用 `ultralytics` 跑通完整 YOLO 训练流程 | `best.pt`、`results.csv`、预测结果图 |
-| 15 节 | 用 PyTorch 手写一个简化版单目标检测器 | `my_model.pth` |
+| 15 节 | 用 PyTorch 手写一个简化版单目标检测器（含训练/验证、IoU 指标、可视化） | `my_model.pth`、`val_vis/` |
 
 前半部分先解决“怎么把自己的数据喂给 YOLO”，后半部分再拆开看“目标检测模型内部到底需要哪些模块”。如果你只是想先训练一个可用模型，读到第 14 节就能跑完整流程；如果你还想理解原理，再继续读第 15 节。
+
+```mermaid
+flowchart LR
+    A["准备图片"] --> B["LabelImg 标注"]
+    B --> C["整理成 YOLO 数据集"]
+    C --> D["data.yaml"]
+    D --> E["Ultralytics 训练"]
+    E --> F["best.pt 预测"]
+    F --> G["拆开原理：手写 MyYolo"]
+```
 
 工具链实战部分可以概括为：
 
@@ -323,6 +333,10 @@ LabelImg 左侧会有一个格式按钮，常见状态是：
 | `YOLO` | 可以跳过第 8 节，直接检查 `labels/*.txt` 和 `data.yaml` |
 | `PascalVOC` | 继续看第 8 节，把 `annotation/*.xml` 转成 `labels/*.txt` |
 
+可以把这一步想成下面这张流程图：先在图片上框出目标，再把这些框整理成模型能读取的标签文件。
+
+![从标注图片到训练标签的流程图](assets/dataset-label-flow.svg)
+
 ### 第三步：开始画框
 
 常用快捷键：
@@ -471,10 +485,22 @@ classes = ["tank", "coffee_bean", "info_device", "quantum_memory"]
 
 | 目录 | 来源 | 标签格式 | 给谁用 |
 | --- | --- | --- | --- |
-| `custom_dataset/annotation` | LabelImg 导出的 VOC 标注 | XML，里面是 `xmin, ymin, xmax, ymax` | 转换脚本和第 15 节的 `get_dataset()` |
+| `custom_dataset/annotation` | LabelImg 导出的 VOC 标注 | XML，里面是 `xmin, ymin, xmax, ymax` | 源数据，需要转换成训练标签 |
 | `custom_dataset/labels` | 第 8 节转换得到 | `class_id x_center y_center width height` | Ultralytics YOLO 训练 |
+| `custom_dataset/my_annotation` | 第 15 节 `voc_convert.py` 生成 | `x_center y_center width height one-hot` | 自定义模型训练 |
 
 `labels/*.txt` 和 `my_annotation/*.txt` 都是 TXT，但格式不同，不能直接混用。
+
+```mermaid
+flowchart TD
+    A["LabelImg 标注"] --> B["annotation/*.xml<br/>VOC 坐标"]
+    B --> C["convert_voc_to_yolo()"]
+    C --> D["labels/*.txt<br/>class_id x y w h"]
+    D --> E["Ultralytics YOLO 训练"]
+    B --> F["voc_convert.py: voc_to_yolo()"]
+    F --> G["my_annotation/*.txt<br/>x y w h one-hot"]
+    G --> H["MyDataset + MyYolo"]
+```
 
 ---
 
@@ -645,7 +671,7 @@ train_results/custom_train/weights/best.pt
 
 真实文件里还会有 `time`、`train/dfl_loss`、`val/*_loss`、学习率等列。它们也有价值，但入门阶段先把 loss 和 metrics 这两类看明白就够了。
 
-第一次看到这个表，可能会有点密集。其实可以先抓住两个方向：
+我第一次看到这个表，可能会感觉有点密集。其实可以先着重看以下两个方向：
 
 - Loss 越低越好。
 - Metrics 越高越好。
@@ -743,9 +769,7 @@ model.predict(
 
 它的意思是：如果模型对某个检测框的信心低于 0.3，就不显示这个框。
 
-如果你发现模型漏检比较多，可以适当降低 `conf`。
-
-如果你发现模型误检比较多，可以适当提高 `conf`。
+如果你发现模型漏检比较多，可以适当降低 `conf`；如果你发现模型误检比较多，可以适当提高 `conf`。
 
 ---
 
@@ -798,7 +822,7 @@ model.predict(
 | 路线 | 训练对象 | 产物 |
 | --- | --- | --- |
 | 1-14 节 | Ultralytics YOLO | `best.pt` |
-| 15 节 | 手写版 `MyYolo` | `my_model.pth` |
+| 15 节 | 手写版 `MyYolo` | `my_model.pth`、`val_vis/epoch_N/*.png` |
 
 如果想自己实现一个目标检测模型，不建议一上来就复刻完整 YOLO。更适合初学者的方式是先做一个**简化版单目标检测器**：
 
@@ -811,6 +835,10 @@ model.predict(
 3. 只跑训练闭环，暂时不做完整推理后处理。
 
 它的目标是帮助我们把目标检测最核心的链路跑通。
+
+下面这张图展示的是手写训练闭环的直观关系：图片先进入 Backbone 提取特征，再分成边框和类别两条预测分支，最后通过 loss 把误差反传回模型。
+
+![手写目标检测模型训练闭环流程图](assets/custom-model-training-flow.svg)
 
 这一节可以按下面的路线理解：
 
@@ -828,7 +856,7 @@ model.predict(
 
 ### 15.1 模型的输出格式
 
-这个 demo 先把问题限制得很小：一张图片只训练一个目标。即使 `get_dataset()` 可以把一张图片中的多个目标写成多行，后面的 `MyDataset` 也只读取第一行：
+这个 demo 先把问题限制得很小：一张图片只训练一个目标。即使 `voc_to_yolo()` 可以把一张图片中的多个目标写成多行，后面的 `MyDataset` 也只读取第一行：
 
 ```text
 [center_x, center_y, width, height, class_one_hot_1, class_one_hot_2, class_one_hot_3, class_one_hot_4]
@@ -844,6 +872,7 @@ model.predict(
 后 4 个数字表示类别 one-hot 标签。比如 `1 0 0 0` 表示第 0 类，`0 1 0 0` 表示第 1 类。
 
 | 文件 | 一行的格式 | 用途 |
+| --- | --- | --- |
 | `my_annotation/*.txt` | `x_center y_center width height class_one_hot...` | 给手写版 `MyYolo` 训练 |
 
 这个简化版检测器把目标检测拆成两个最基本的问题：
@@ -941,10 +970,11 @@ MyDataset.__getitem__()
 image [3, 224, 224], target_bbox [4], target_class []
 ```
 
-当前 demo 有两个文件约定：
+当前 demo 有三个文件约定：
 
 1. 图片和标签文件名要同名，只是扩展名不同。
 2. `custom.py` 里读取图片时写死了 `.png`，如果你的图片是 `.jpg`，需要同步修改这行读取逻辑。
+3. `MyDataset` 会按文件名排序并只读取 `.txt` 标签，这样配合固定随机种子时，训练/验证划分才更稳定。
 
 核心代码如下：
 
@@ -1005,7 +1035,7 @@ transforms.Normalize(
 
 这一步不是目标检测特有的，而是使用 TorchVision 预训练图像模型时常见的输入预处理要求。
 
-最后再把 `Dataset` 交给 PyTorch 的 `DataLoader`：
+理解 `DataLoader` 时，可以先把它看成“把单个样本组装成 batch 的工具”。最小写法类似这样：
 
 ```python
 dataloader = DataLoader(MyDataset(), batch_size=4, shuffle=True)
@@ -1017,6 +1047,8 @@ dataloader = DataLoader(MyDataset(), batch_size=4, shuffle=True)
 for image, target_bbox, target_class in dataloader:
     ...
 ```
+
+不过本文后面的实际训练代码会先用 `random_split` 划分训练集和验证集，然后分别创建 `train_loader` 和 `val_loader`。
 
 ### 15.4 网络结构：Backbone + Shared + Head
 
@@ -1176,6 +1208,20 @@ class_logit  -> class_1_logit, class_2_logit, class_3_logit, class_4_logit
 | `predict_class` | `[batch_size, classes_length]` | 模型输出的分类 logits | `CrossEntropyLoss` |
 | `target_class` | `[batch_size]` | 真实类别下标，`dtype=torch.long` | `CrossEntropyLoss` |
 
+```mermaid
+flowchart LR
+    A["image batch"] --> B["MyYolo"]
+    B --> C["predict_bbox<br/>[B, 4]"]
+    B --> D["predict_class<br/>[B, classes]"]
+    E["target_bbox<br/>[B, 4]"] --> F["MSELoss"]
+    C --> F
+    G["target_class<br/>[B]"] --> H["CrossEntropyLoss"]
+    D --> H
+    F --> I["loss = bbox_loss + class_loss"]
+    H --> I
+    I --> J["backward + optimizer.step"]
+```
+
 #### 15.5.1 坐标损失
 
 坐标预测本质上是回归问题。可以使用 `MSELoss`：
@@ -1243,11 +1289,11 @@ loss = bbox_loss + class_loss
 
 这里直接把两个 loss 相加，是一种简化写法。真实训练中，坐标损失和分类损失的量级可能不同，经常需要调权重，或者把坐标损失换成更适合框回归的 IoU 系列损失。
 
-### 15.6 训练手写版 MyYolo
+### 15.6 训练循环：训练 + 验证 + 保存最佳模型
 
 前面的数据、模型和损失函数都准备好以后，训练循环就很直接了。
 
-第一次运行前要先确认 `custom_dataset/my_annotation` 已经存在，并且里面有和图片同名的 `.txt` 文件。因为 `MyDataset()` 初始化时会立刻读取这个目录，如果目录还没生成，训练会在创建 `DataLoader` 之前就失败。
+
 
 `main()` 里先创建模型、优化器、损失函数和 `DataLoader`：
 
@@ -1260,43 +1306,211 @@ bbox_loss_fn = nn.MSELoss()
 dataloader = DataLoader(MyDataset(), batch_size=4, shuffle=True)
 ```
 
-如果还没有生成 `my_annotation`，先运行一次 `get_dataset()`。当前代码里这一行被注释掉了，第一次准备标签时可以临时打开，生成完再注释回去：
+#### 15.6.1 划分训练集和验证集
+
+这里把数据按 8:2 划分出训练集和验证集：
 
 ```python
-get_dataset()
+from torch.utils.data import random_split
+
+dataset = MyDataset()
+train_size = int(len(dataset) * 0.8)
+val_size = len(dataset) - train_size
+
+generator = torch.Generator().manual_seed(42)
+train_set, val_set = random_split(dataset, [train_size, val_size], generator=generator)
+
+train_loader = DataLoader(train_set, batch_size=4, shuffle=True)
+val_loader = DataLoader(val_set, batch_size=4, shuffle=False)
 ```
 
-真正训练时，每个 batch 都会经历下面几步：
+两个细节值得展开：
+
+- `manual_seed(42)`：固定随机切分；再配合 `MyDataset` 对标签文件名排序，才能保证每次运行的训练/验证划分一致，便于对比实验。
+- `shuffle=False`：验证集不需要打乱，结果更稳定。
+
+#### 15.6.2 训练阶段 vs 验证阶段
+
+PyTorch 通过 `model.train()` 和 `model.eval()` 切换两种模式。两者的区别主要在 BN、Dropout 这类**训练专用层**：训练时它们会更新统计量并随机失活，验证时则关闭。
+
+| 阶段 | 切换语句 | 是否反传 | 是否计算梯度 |
+| --- | --- | --- | --- |
+| 训练 | `model.train()` | 是 | 是 |
+| 验证 | `model.eval()` | 否 | 否（`torch.no_grad()`） |
+
+`torch.no_grad()` 还能省显存：不计算梯度时 PyTorch 不会保留中间张量。
+
+#### 15.6.3 IoU 作为验证观测指标
+
+光看 loss 数字其实不够直观。**IoU（Intersection over Union，交并比）**是目标检测里更贴近“框对不对”的指标：
+
+```text
+IoU = 交集面积 / 并集面积
+```
+
+它在 `[0, 1]` 之间：1.0 完美重合，0.5 通常被认为“检测正确”，0 完全不相交。
+
+先看一眼真实验证图会更直观：绿色是真实标注框，红色是模型预测框；两者重叠越多，标题里的 IoU 越高。
+
+| 训练初期 | 中途变好 | 后期更稳定 |
+| --- | --- | --- |
+| ![epoch 0 的验证预测结果](assets/val_vis/epoch0_batch0_img1.png) | ![epoch 4 的验证预测结果](assets/val_vis/epoch4_batch0_img1.png) | ![epoch 18 的验证预测结果](assets/val_vis/epoch18_batch0_img1.png) |
+
+
+实现放在独立的 `eval_utils.py` 里：
 
 ```python
-for epoch in range(20):
-    total_loss = 0
-    for image, target_bbox, target_class in dataloader:
-        predict_bbox, predict_class = model(image)
+def compute_iou(pred, target):
+    """pred / target 形状 [B, 4]，YOLO 归一化格式 (cx, cy, w, h)"""
 
+    def to_xyxy(box):
+        cx, cy, w, h = box.unbind(-1)
+        return torch.stack([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], dim=-1)
+
+    p = to_xyxy(pred)
+    t = to_xyxy(target)
+
+    x1 = torch.max(p[..., 0], t[..., 0])
+    y1 = torch.max(p[..., 1], t[..., 1])
+    x2 = torch.min(p[..., 2], t[..., 2])
+    y2 = torch.min(p[..., 3], t[..., 3])
+
+    inter = (x2 - x1).clamp(min=0) * (y2 - y1).clamp(min=0)
+    area_p = (p[..., 2] - p[..., 0]).clamp(min=0) * (p[..., 3] - p[..., 1]).clamp(min=0)
+    area_t = (t[..., 2] - t[..., 0]) * (t[..., 3] - t[..., 1])
+    union = area_p + area_t - inter
+
+    return inter / union.clamp(min=1e-6)
+```
+
+两个鲁棒性细节：
+
+- `clamp(min=0)`：两框不相交时算出来的宽高是负的，不 clamp 会得到“虚假的正交集面积”。
+- `area_p` 也要 clamp：训练初期模型可能预测出负的 w/h，否则面积是负的，IoU 出现负值或 nan。
+
+#### 15.6.4 保存最佳模型而不是最后一轮
+
+之前的写法是训练 20 轮、最后存一次。问题是：**最后一轮未必是最好的**——可能在第 12 轮就达到验证 loss 最低点，之后开始过拟合，最后存下来的反而是退化版本。
+
+正确做法是用 `best_val_loss` 跟踪历史最低验证 loss，只在创下新低时覆盖保存：
+
+```python
+best_val_loss = float("inf")
+save_path = os.path.join(current_dir, "my_model.pth")
+
+if avg_val < best_val_loss:
+    best_val_loss = avg_val
+    torch.save(model.state_dict(), save_path)
+```
+
+#### 15.6.5 可视化：把预测框和真实框画在原图上
+
+数字指标（loss、IoU）再好，也比不上一眼看到“模型框的位置对不对”。所以在每次创下新低时，把验证集的预测结果连同真值框画下来，落盘成 PNG。
+
+```text
+val_vis/
+└── epoch_N/                 # N 是触发新低时的 epoch 编号
+    ├── batch0_img0.png
+    ├── batch0_img1.png
+    └── ...
+```
+
+每张图的样式:
+
+- 绿色框 = Ground Truth（真值）
+- 红色框 = 预测
+- 标题显示该图的 IoU 数值
+
+例如下面这张图里，红框已经明显贴近绿框，说明模型至少学到了一部分“框该画在哪里”的规律：
+
+![验证集预测结果示例](assets/val_vis/epoch18_batch0_img1.png)
+
+实现也放在 `eval_utils.py` 里（详见仓库代码），核心是几个 PyTorch ↔ matplotlib 的转换套路：
+
+| 场景 | 套路 |
+| --- | --- |
+| 张量图像 → 显示 | `.permute(1,2,0).cpu().numpy()` |
+| 类别 logits → 类别索引 | `.argmax(dim=-1)` |
+| 标量张量 → Python 数 | `.item()` |
+| 循环中保存 matplotlib 图 | 一定 `plt.close(fig)`，否则内存泄漏 |
+
+`.permute(1, 2, 0)` 的原因是：**PyTorch 用 `[C, H, W]`，但 matplotlib/PIL/numpy 用 `[H, W, C]`**，所以要调换维度顺序。
+
+#### 15.6.6 完整训练循环
+
+把上面所有要素串起来:
+
+```python
+best_val_loss = float("inf")
+save_path = os.path.join(current_dir, "my_model.pth")
+vis_dir = os.path.join(current_dir, "val_vis")
+
+for epoch in range(20):
+    # 训练
+    model.train()
+    train_loss = 0
+    for image, target_bbox, target_class in train_loader:
+        predict_bbox, predict_class = model(image)
         bbox_loss = bbox_loss_fn(predict_bbox, target_bbox)
         class_loss = class_loss_fn(predict_class, target_class)
-
         loss = bbox_loss + class_loss
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        train_loss += loss.item()
 
-        total_loss += loss.item()
-    print(f"epoch {epoch}, loss: {total_loss:.4f}")
+    # 验证
+    model.eval()
+    val_loss = 0
+    iou_sum = 0.0
+    iou_count = 0
+    val_batches = []
+    with torch.no_grad():
+        for image, target_bbox, target_class in val_loader:
+            predict_bbox, predict_class = model(image)
+            bbox_loss = bbox_loss_fn(predict_bbox, target_bbox)
+            class_loss = class_loss_fn(predict_class, target_class)
+            val_loss += (bbox_loss + class_loss).item()
+
+            ious = compute_iou(predict_bbox, target_bbox)
+            iou_sum += ious.sum().item()
+            iou_count += ious.numel()
+            val_batches.append(
+                (image, predict_bbox, target_bbox, predict_class, target_class, ious)
+            )
+
+    avg_train = train_loss / len(train_loader)
+    avg_val = val_loss / len(val_loader)
+    avg_iou = iou_sum / max(iou_count, 1)
+    print(f"epoch {epoch}, train_loss: {avg_train:.4f}, "
+          f"val_loss: {avg_val:.4f}, val_iou: {avg_iou:.4f}")
+
+    # 保留验证 loss 最低的权重，并落盘当轮的可视化结果
+    if avg_val < best_val_loss:
+        best_val_loss = avg_val
+        torch.save(model.state_dict(), save_path)
+        epoch_vis_dir = os.path.join(vis_dir, f"epoch_{epoch}")
+        for batch_idx, batch in enumerate(val_batches):
+            visualize_batch(*batch, classes=classes,
+                            save_dir=epoch_vis_dir, batch_idx=batch_idx)
 ```
 
-这段代码就是 PyTorch 训练最标准的节奏：
+控制台输出会变成这样：
 
 ```text
-前向传播 -> 计算损失 -> 清空梯度 -> 反向传播 -> 更新参数
+epoch 5, train_loss: 0.0234, val_loss: 0.0312, val_iou: 0.6843
+  -> best model saved (val_loss: 0.0312), vis -> .../val_vis/epoch_5
 ```
 
-训练结束后，模型参数会保存到：
+训练完之后看数字最大的已保存 `epoch_N` 目录，通常就是最近一次刷新 `best_val_loss` 时的预测可视化。注意这里不是按文件管理器的字符串排序看“最后一个”，而是看 `epoch_N` 里的数字。
 
-```python
-torch.save(model.state_dict(), "my_model.pth")
-```
+可视化也能提醒我们：这个 demo 不是每张图都预测得很好。同样是后期结果，有的样本 IoU 能到 0.626 左右，有的样本仍然可能完全没框中。
+
+| 效果较好 | 仍然失败 |
+| --- | --- |
+| ![后期较好的验证预测结果](assets/val_vis/epoch18_batch0_img1.png) | ![后期仍然失败的验证预测结果](assets/val_vis/epoch18_batch0_img0.png) |
+
 
 ### 15.7 这个 demo 和完整 YOLO 的差距
 
@@ -1305,19 +1519,19 @@ torch.save(model.state_dict(), "my_model.pth")
 ```text
 图片 + XML 标注
     ↓
-get_dataset() 生成 my_annotation/*.txt
+voc_to_yolo() 生成 my_annotation/*.txt
     ↓
 MyDataset 读取图片、边框和类别
     ↓
-DataLoader 组装 batch
+random_split 划分 train_set / val_set
     ↓
 MyYolo 输出 predict_bbox 和 predict_class
     ↓
-MSELoss + CrossEntropyLoss
+训练阶段: MSELoss + CrossEntropyLoss -> 反向传播
     ↓
-反向传播更新模型
+验证阶段: 计算 val_loss + IoU + 可视化
     ↓
-保存 my_model.pth
+val_loss 创下新低时保存 best 权重
 ```
 
 > 标签格式决定模型输出，模型输出决定损失函数，损失函数再反过来指导模型学习。
@@ -1326,8 +1540,8 @@ MSELoss + CrossEntropyLoss
 
 1. 这里只训练单目标，`MyDataset` 只读取 TXT 的第一行。
 2. 没有完整检测模型常见的多尺度特征、检测头设计、框解码/匹配策略和推理后处理机制。
-3. 没有划分训练集和验证集，也没有计算 mAP、Precision、Recall 等检测指标。
-4. 坐标损失只是简单 MSE，没有使用更适合目标框的 IoU 系列损失。
+3. 验证只看 `val_loss` 和平均 IoU，没有计算检测领域更常用的 mAP、Precision、Recall。
+4. 坐标损失仍然是 MSE，没有切换到 GIoU/DIoU/CIoU 这类更适合目标框的 IoU 系列损失。
 5. `bbox_head` 的输出没有显式限制到 `[0, 1]`，只是通过归一化标签和 MSE 去学习这个范围。
 6. 推理阶段还需要补充图片预处理、模型加载、类别解析和画框逻辑。
 
